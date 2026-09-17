@@ -6,6 +6,7 @@ use crate::instruction::Instruction;
 pub enum DisassemblerError {
     InvalidOpcode(u8),
     InvalidMode(u8),
+    InvalidRM(u8),
 }
 
 impl std::fmt::Display for DisassemblerError {
@@ -13,6 +14,7 @@ impl std::fmt::Display for DisassemblerError {
         match self {
             Self::InvalidOpcode(opcode) => write!(f, "invalid opcode `{:08b}`", opcode),
             Self::InvalidMode(mode) => write!(f, "invalid mode `{:08b}`", mode),
+            Self::InvalidRM(rm) => write!(f, "invalid rm `{:03b}`", rm),
         }
     }
 }
