@@ -1,3 +1,5 @@
+use std::fmt;
+
 pub struct Instruction {
     pub address: usize,
     pub opcode: Opcode,
@@ -11,3 +13,9 @@ impl Instruction {
 
 #[derive(Debug)]
 pub enum Opcode {}
+
+impl fmt::Display for Opcode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "opcode")
+    }
+}
