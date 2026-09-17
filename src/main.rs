@@ -5,6 +5,7 @@ use crate::disassembler::Disassembler;
 mod disassembler;
 mod instruction;
 mod mode;
+mod register;
 mod rm;
 
 // TODO: Provide polished CLI via clap
