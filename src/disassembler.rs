@@ -13,7 +13,7 @@ impl std::fmt::Display for DisassemblerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidOpcode(opcode) => write!(f, "invalid opcode `{:08b}`", opcode),
-            Self::InvalidMode(mode) => write!(f, "invalid mode `{:08b}`", mode),
+            Self::InvalidMode(mode) => write!(f, "invalid mode `{:02b}`", mode),
             Self::InvalidRM(rm) => write!(f, "invalid rm `{:03b}`", rm),
         }
     }
