@@ -3,8 +3,11 @@ use std::env;
 use crate::disassembler::Disassembler;
 
 mod disassembler;
+mod disassembler_macros;
 mod instruction;
+mod instruction_macros;
 mod mode;
+mod operand;
 mod register;
 mod rm;
 
