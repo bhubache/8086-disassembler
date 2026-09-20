@@ -260,16 +260,16 @@ pub enum Opcode {
     CmpS16(Option<SegmentRegister>),
 
     // stos
-    // StosDestStr8,
-    // StosDestStr16,
+    StoS8(Option<SegmentRegister>),
+    StoS16(Option<SegmentRegister>),
 
     // lods
-    // LodsSrcStr8,
-    // LodsSrcStr16,
+    LodS8(Option<SegmentRegister>),
+    LodS16(Option<SegmentRegister>),
 
     // scas
-    // ScaSDestStr8,
-    // ScaSDestStr16,
+    ScaS8(Option<SegmentRegister>),
+    ScaS16(Option<SegmentRegister>),
 
     // ret
     RetIntraSegImmed16(u16),
@@ -367,8 +367,8 @@ pub enum Opcode {
     InToAXFromDX,
 
     // out
-    OutToALFromImmed8(u8),
-    OutToAXFromImmed8(u8),
+    OutToPort8FromAL(u8),
+    OutToPort8FromAX(u8),
     OutToDXFromAL,
     OutToDXFromAX,
 
@@ -435,6 +435,9 @@ pub enum Opcode {
     JmpShortLabel(i16),
     JmpModRm16(ModRm16),
     JmpMem16(MemoryIndex),
+
+    // salc - set AL to Carry
+    Salc,
 }
 
 impl_opcodes_display!(
@@ -458,6 +461,12 @@ pub enum RepeatableStringInstruction {
     Movsw,
     Cmpsb,
     Cmpsw,
+    Stosb,
+    Stosw,
+    Lodsb,
+    Lodsw,
+    Scasb,
+    Scasw,
 }
 
 impl fmt::Display for RepeatableStringInstruction {
@@ -467,6 +476,12 @@ impl fmt::Display for RepeatableStringInstruction {
             Self::Movsw => write!(f, "movsw"),
             Self::Cmpsb => write!(f, "cmpsb"),
             Self::Cmpsw => write!(f, "cmpsw"),
+            Self::Stosb => write!(f, "stosb"),
+            Self::Stosw => write!(f, "stosw"),
+            Self::Lodsb => write!(f, "lodsb"),
+            Self::Lodsw => write!(f, "lodsw"),
+            Self::Scasb => write!(f, "scasb"),
+            Self::Scasw => write!(f, "scasw"),
         }
     }
 }

@@ -23,7 +23,15 @@ macro_rules! impl_opcodes_display {
                                 None => String::new(),
                             };
 
-                            write!(f, "{}rep {}", sr_str, rep_str_inst)
+                            let rep_str = match rep_str_inst {
+                                RepeatableStringInstruction::Scasb => "repe",
+                                RepeatableStringInstruction::Scasw => "repe",
+                                RepeatableStringInstruction::Cmpsb => "repe",
+                                RepeatableStringInstruction::Cmpsw => "repe",
+                                _ => "rep",
+                            };
+
+                            write!(f, "{}{} {}", sr_str, rep_str, rep_str_inst)
                         },
                         Self::Repne(sr, rep_str_inst) => {
                             let sr_str = match sr {
@@ -31,7 +39,15 @@ macro_rules! impl_opcodes_display {
                                 None => String::new(),
                             };
 
-                            write!(f, "{}repne {}", sr_str, rep_str_inst)
+                            let rep_str = match rep_str_inst {
+                                RepeatableStringInstruction::Scasb => "repne",
+                                RepeatableStringInstruction::Scasw => "repne",
+                                RepeatableStringInstruction::Cmpsb => "repne",
+                                RepeatableStringInstruction::Cmpsw => "repne",
+                                _ => "rep",
+                            };
+
+                            write!(f, "{}{} {}", sr_str, rep_str, rep_str_inst)
                         },
 
                         Self::PushSR(sr) => write!(f, "push {}", sr),
@@ -133,6 +149,42 @@ macro_rules! impl_opcodes_display {
                                 None => write!(f, "cmpsw"),
                             }
                         },
+                        Self::StoS8(sr) => {
+                            match sr {
+                                Some(sr) => write!(f, "{} stosb", sr),
+                                None => write!(f, "stosb"),
+                            }
+                        },
+                        Self::StoS16(sr) => {
+                            match sr {
+                                Some(sr) => write!(f, "{} stosw", sr),
+                                None => write!(f, "stosw"),
+                            }
+                        },
+                        Self::LodS8(sr) => {
+                            match sr {
+                                Some(sr) => write!(f, "{} lodsb", sr),
+                                None => write!(f, "lodsb"),
+                            }
+                        },
+                        Self::LodS16(sr) => {
+                            match sr {
+                                Some(sr) => write!(f, "{} lodsw", sr),
+                                None => write!(f, "lodsw"),
+                            }
+                        },
+                        Self::ScaS8(sr) => {
+                            match sr {
+                                Some(sr) => write!(f, "{} scasb", sr),
+                                None => write!(f, "scasb"),
+                            }
+                        },
+                        Self::ScaS16(sr) => {
+                            match sr {
+                                Some(sr) => write!(f, "{} scasw", sr),
+                                None => write!(f, "scasw"),
+                            }
+                        },
 
                         Self::RetIntraSegImmed16(immed) => write!(f, "retn {:X}h", immed),
                         Self::RetIntraSeg => write!(f, "retn"),
@@ -197,8 +249,8 @@ macro_rules! impl_opcodes_display {
                         Self::InToALFromDX => write!(f, "in al, dx"),
                         Self::InToAXFromDX => write!(f, "in ax, dx"),
 
-                        Self::OutToALFromImmed8(immed) => write!(f, "out al, {:X}h", immed),
-                        Self::OutToAXFromImmed8(immed) => write!(f, "out ax, {:X}h", immed),
+                        Self::OutToPort8FromAL(immed) => write!(f, "out {:X}h, al", immed),
+                        Self::OutToPort8FromAX(immed) => write!(f, "out {:X}h, ax", immed),
                         Self::OutToDXFromAL => write!(f, "out dx, al"),
                         Self::OutToDXFromAX => write!(f, "out dx, ax"),
 
@@ -232,6 +284,7 @@ macro_rules! impl_opcodes_display {
                         Self::Sti => write!(f, "sti"),
                         Self::Cld => write!(f, "cld"),
                         Self::Std => write!(f, "std"),
+                        Self::Salc => write!(f, "salc"),
                     }
                 }
             }

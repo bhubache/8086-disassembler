@@ -177,22 +177,26 @@ impl Disassembler {
                 0x5D => Opcode::PopGR16(GeneralRegister16::BP),
                 0x5E => Opcode::PopGR16(GeneralRegister16::SI),
                 0x5F => Opcode::PopGR16(GeneralRegister16::DI),
-                0x60 => todo!(),
-                0x61 => todo!(),
-                0x62 => todo!(),
-                0x63 => todo!(),
-                0x64 => todo!(),
-                0x65 => todo!(),
-                0x66 => todo!(),
-                0x67 => todo!(),
-                0x68 => todo!(),
-                0x69 => todo!(),
-                0x6A => todo!(),
-                0x6B => todo!(),
-                0x6C => todo!(),
-                0x6D => todo!(),
-                0x6E => todo!(),
-                0x6F => todo!(),
+
+                // 0x60 - 0x6F are documented as unused but there exist hardware generated tests
+                // for them
+                0x60 => Opcode::Jo(self.parse_short_label()),
+                0x61 => Opcode::Jno(self.parse_short_label()),
+                0x62 => Opcode::Jb(self.parse_short_label()),
+                0x63 => Opcode::Jnb(self.parse_short_label()),
+                0x64 => Opcode::Jz(self.parse_short_label()),
+                0x65 => Opcode::Jnz(self.parse_short_label()),
+                0x66 => Opcode::Jbe(self.parse_short_label()),
+                0x67 => Opcode::Jnbe(self.parse_short_label()),
+                0x68 => Opcode::Js(self.parse_short_label()),
+                0x69 => Opcode::Jns(self.parse_short_label()),
+                0x6A => Opcode::Jp(self.parse_short_label()),
+                0x6B => Opcode::Jnp(self.parse_short_label()),
+                0x6C => Opcode::Jl(self.parse_short_label()),
+                0x6D => Opcode::Jnl(self.parse_short_label()),
+                0x6E => Opcode::Jle(self.parse_short_label()),
+                0x6F => Opcode::Jnle(self.parse_short_label()),
+
                 0x70 => Opcode::Jo(self.parse_short_label()),
                 0x71 => Opcode::Jno(self.parse_short_label()),
                 0x72 => Opcode::Jb(self.parse_short_label()),
@@ -309,12 +313,12 @@ impl Disassembler {
                 0xA7 => Opcode::CmpS16(sr_override),
                 0xA8 => Opcode::TestToALFromImmed8(self.parse_byte()),
                 0xA9 => Opcode::TestToAXFromImmed16(self.parse_word()),
-                0xAA => todo!(),
-                0xAB => todo!(),
-                0xAC => todo!(),
-                0xAD => todo!(),
-                0xAE => todo!(),
-                0xAF => todo!(),
+                0xAA => Opcode::StoS8(sr_override),
+                0xAB => Opcode::StoS16(sr_override),
+                0xAC => Opcode::LodS8(sr_override),
+                0xAD => Opcode::LodS16(sr_override),
+                0xAE => Opcode::ScaS8(sr_override),
+                0xAF => Opcode::ScaS16(sr_override),
                 0xB0 => Opcode::MovToGR8FromImmed8(GeneralRegister8::AL, self.parse_byte()),
                 0xB1 => Opcode::MovToGR8FromImmed8(GeneralRegister8::CL, self.parse_byte()),
                 0xB2 => Opcode::MovToGR8FromImmed8(GeneralRegister8::DL, self.parse_byte()),
@@ -331,8 +335,8 @@ impl Disassembler {
                 0xBD => Opcode::MovToGR16FromImmed16(GeneralRegister16::BP, self.parse_word()),
                 0xBE => Opcode::MovToGR16FromImmed16(GeneralRegister16::SI, self.parse_word()),
                 0xBF => Opcode::MovToGR16FromImmed16(GeneralRegister16::DI, self.parse_word()),
-                0xC0 => todo!(),
-                0xC1 => todo!(),
+                0xC0 => Opcode::RetIntraSegImmed16(self.parse_word()),
+                0xC1 => Opcode::RetIntraSeg,
                 0xC2 => Opcode::RetIntraSegImmed16(self.parse_word()),
                 0xC3 => Opcode::RetIntraSeg,
                 0xC4 => {
@@ -351,8 +355,8 @@ impl Disassembler {
                     let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
                     Opcode::MovToMem16FromImmed16(mod_rm, self.parse_word())
                 }
-                0xC8 => todo!(),
-                0xC9 => todo!(),
+                0xC8 => Opcode::RetInterSegImmed16(self.parse_word()),
+                0xC9 => Opcode::RetInterSeg,
                 0xCA => Opcode::RetInterSegImmed16(self.parse_word()),
                 0xCB => Opcode::RetInterSeg,
                 0xCC => Opcode::Int3,
@@ -392,7 +396,7 @@ impl Disassembler {
                 }
                 0xD4 => Opcode::Aam(self.parse_byte()),
                 0xD5 => Opcode::Aad(self.parse_byte()),
-                0xD6 => todo!(),
+                0xD6 => Opcode::Salc,
                 0xD7 => Opcode::Xlat,
                 0xD8 | 0xD9 | 0xDA | 0xDB | 0xDC | 0xDD | 0xDE | 0xDF => {
                     let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
@@ -404,8 +408,8 @@ impl Disassembler {
                 0xE3 => Opcode::Jcxz(self.parse_short_label()),
                 0xE4 => Opcode::InToALFromImmed8(self.parse_byte()),
                 0xE5 => Opcode::InToAXFromImmed8(self.parse_byte()),
-                0xE6 => Opcode::OutToALFromImmed8(self.parse_byte()),
-                0xE7 => Opcode::OutToAXFromImmed8(self.parse_byte()),
+                0xE6 => Opcode::OutToPort8FromAL(self.parse_byte()),
+                0xE7 => Opcode::OutToPort8FromAX(self.parse_byte()),
                 0xE8 => Opcode::CallNearProc(format!("{:04X}h", self.parse_jump_word())),
                 0xE9 => Opcode::JmpNearLabel(format!("{:04X}h", self.parse_jump_word())),
                 0xEA => {
@@ -493,6 +497,12 @@ impl Disassembler {
             0xA5 => RepeatableStringInstruction::Movsw,
             0xA6 => RepeatableStringInstruction::Cmpsb,
             0xA7 => RepeatableStringInstruction::Cmpsw,
+            0xAA => RepeatableStringInstruction::Stosb,
+            0xAB => RepeatableStringInstruction::Stosw,
+            0xAC => RepeatableStringInstruction::Lodsb,
+            0xAD => RepeatableStringInstruction::Lodsw,
+            0xAE => RepeatableStringInstruction::Scasb,
+            0xAF => RepeatableStringInstruction::Scasw,
             op => return Err(DisassemblerError::InvalidRepOperand(op)),
         };
 
@@ -907,7 +917,7 @@ mod tests {
         let mut num_wrong = 0;
         for test_spec in test_list {
             let mut disassembler = Disassembler::from_bytes(test_spec.bytes.clone());
-            println!("{:#?}", test_spec);
+            // println!("{:#?}", test_spec);
             disassembler.disassemble().unwrap();
             let observed_name = disassembler.dump();
 
@@ -938,21 +948,36 @@ mod tests {
     }
 
     #[test]
+    fn test_wait() {
+        let bytes = vec![0x9B];
+        let mut disassembler = Disassembler::from_bytes(bytes.clone());
+        disassembler.disassemble().unwrap();
+        let observed_name = disassembler.dump();
+
+        assert_eq!(observed_name, "wait");
+    }
+
+    #[test]
     fn test_a_lot() {
-        // NOTE: Tests are not available for [0xF0, 0xF4]
-        // TODO: Look into why tests for 0x9B are missing
-        // TODO: Complete tests 0xA4-0xA7 and 0xAA-0xAF and 0xC8-0xC9
-        // TODO: Figure out what to do with opcodes that the manual says are unused but tests
-        // TODO: 0xE6 and 0xE7 in the tests appear to have the operands flipped?
-        // produce instructions for
+        // NOTE: Opcodes that should actually be skipped:
+        // 0x0F
+        // 0x26
+        // 0x2E
+        // 0x36
+        // 0x3E
+        // 0x9B - There are no tests for WAIT
+        // 0xF0
+        // 0xF1
+        // 0xF2
+        // 0xF3
+        // 0xF4
+        // 0xF6 - I have to figure out how to/if I want to support rep with idiv
+        // 0xF7 - similar situation as 0xF6
         // TODO: 0xF6 (similarly for 0xF7) has [46, 243, 246, 248] `idiv al`. I believe this is illegal according to the
         // manual but the CPU still does something because the hardware didn't yet handle illegal
         // opcodes
         let unused_opcodes = vec![
-            0x0F, 0x26, 0x2E, 0x36, 0x3E, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68,
-            0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F, 0x9B, 0xA4, 0xA5, 0xA6, 0xA7, 0xAA, 0xAB,
-            0xAC, 0xAD, 0xAE, 0xAF, 0xC0, 0xC1, 0xC8, 0xC9, 0xD6, 0xE6, 0xE7, 0xF0, 0xF1, 0xF2,
-            0xF3, 0xF4, 0xF6, 0xF7,
+            0x0F, 0x26, 0x2E, 0x36, 0x3E, 0x9B, 0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF6, 0xF7,
         ];
         for opcode in 0x00..0x100 {
             if unused_opcodes.contains(&opcode) {
