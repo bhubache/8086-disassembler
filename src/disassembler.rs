@@ -1,5 +1,7 @@
 use std::fs;
 
+use flate2::write;
+
 use crate::instruction::Instruction;
 use crate::instruction::Opcode;
 use crate::instruction::RepeatableStringInstruction;
@@ -72,6 +74,7 @@ impl Disassembler {
     }
 
     pub fn disassemble(&mut self) -> Result<(), DisassemblerError> {
+        // dbg!(self.bytes.iter().map(|byte| format!("{}", byte)).collect::<Vec<_>>().join("\n"));
         let mut sr_override = None;
         while self.index < self.bytes.len() {
             let (opcode_index, opcode) = (self.index, self.bytes[self.index]);
@@ -330,7 +333,7 @@ impl Disassembler {
                 0xBF => Opcode::MovToGR16FromImmed16(GeneralRegister16::DI, self.parse_word()),
                 0xC0 => todo!(),
                 0xC1 => todo!(),
-                0xC2 => Opcode::RetImmed16(self.parse_word()),
+                0xC2 => Opcode::RetIntraSegImmed16(self.parse_word()),
                 0xC3 => Opcode::RetIntraSeg,
                 0xC4 => {
                     let (fst, snd) = self.parse_mod_rm_as_mem_index(sr_override)?;
@@ -350,9 +353,107 @@ impl Disassembler {
                 }
                 0xC8 => todo!(),
                 0xC9 => todo!(),
-                0xCA => Opcode::RetInterSeg(self.parse_word()),
+                0xCA => Opcode::RetInterSegImmed16(self.parse_word()),
+                0xCB => Opcode::RetInterSeg,
+                0xCC => Opcode::Int3,
+                0xCD => Opcode::IntFromImmed8(self.parse_byte()),
+                0xCE => Opcode::Into,
+                0xCF => Opcode::Iret,
+                0xD0 => {
+                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
+                    // let immed = self.parse_byte();
+
+                    Self::create_modrm_with_reg_mnemonic_encoding_8_2(mnemonic_encoding, mod_rm)?
+                }
+                0xD1 => {
+                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
+                    // let immed = self.parse_byte();
+
+                    Self::create_modrm_with_reg_mnemonic_encoding_16_2(mnemonic_encoding, mod_rm)?
+                }
+                0xD2 => {
+                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
+                    // let immed = self.parse_byte();
+
+                    Self::create_modrm_with_reg_mnemonic_encoding_8_2_cl(mnemonic_encoding, mod_rm)?
+                }
+                0xD3 => {
+                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
+                    // let immed = self.parse_byte();
+
+                    Self::create_modrm_with_reg_mnemonic_encoding_16_2_cl(
+                        mnemonic_encoding,
+                        mod_rm,
+                    )?
+                }
+                0xD4 => Opcode::Aam(self.parse_byte()),
+                0xD5 => Opcode::Aad(self.parse_byte()),
+                0xD6 => todo!(),
+                0xD7 => Opcode::Xlat,
+                0xD8 | 0xD9 | 0xDA | 0xDB | 0xDC | 0xDD | 0xDE | 0xDF => {
+                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
+                    Opcode::Esc(mod_rm)
+                }
+                0xE0 => Opcode::Loopne(self.parse_short_label()),
+                0xE1 => Opcode::Loope(self.parse_short_label()),
+                0xE2 => Opcode::Loop(self.parse_short_label()),
+                0xE3 => Opcode::Jcxz(self.parse_short_label()),
+                0xE4 => Opcode::InToALFromImmed8(self.parse_byte()),
+                0xE5 => Opcode::InToAXFromImmed8(self.parse_byte()),
+                0xE6 => Opcode::OutToALFromImmed8(self.parse_byte()),
+                0xE7 => Opcode::OutToAXFromImmed8(self.parse_byte()),
+                0xE8 => Opcode::CallNearProc(format!("{:04X}h", self.parse_jump_word())),
+                0xE9 => Opcode::JmpNearLabel(format!("{:04X}h", self.parse_jump_word())),
+                0xEA => {
+                    let displacement = self.parse_word();
+                    let segment = self.parse_word();
+                    Opcode::JmpFarLabel(format!("{:04X}h:{:04X}h", segment, displacement))
+                }
+                0xEB => Opcode::JmpShortLabel(self.parse_short_label()),
+                0xEC => Opcode::InToALFromDX,
+                0xED => Opcode::InToAXFromDX,
+                0xEE => Opcode::OutToDXFromAL,
+                0xEF => Opcode::OutToDXFromAX,
+                0xF0 => Opcode::Lock,
+                0xF1 => todo!(),
                 0xF2 => Opcode::Repne(sr_override, self.parse_rep_op()?),
                 0xF3 => Opcode::Rep(sr_override, self.parse_rep_op()?),
+                0xF4 => Opcode::Hlt,
+                0xF5 => Opcode::Cmc,
+                0xF6 => {
+                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
+
+                    self.create_modrm_with_reg_mnemonic_encoding_8_3(mnemonic_encoding, mod_rm)?
+                }
+                0xF7 => {
+                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
+
+                    self.create_modrm_with_reg_mnemonic_encoding_16_3(mnemonic_encoding, mod_rm)?
+                }
+                0xF8 => Opcode::Clc,
+                0xF9 => Opcode::Stc,
+                0xFA => Opcode::Cli,
+                0xFB => Opcode::Sti,
+                0xFC => Opcode::Cld,
+                0xFD => Opcode::Std,
+                0xFE => {
+                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
+
+                    self.create_modrm_with_reg_mnemonic_encoding_8_4(mnemonic_encoding, mod_rm)?
+                }
+                0xFF => {
+                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
+
+                    self.create_modrm_with_reg_mnemonic_encoding_16_4(mnemonic_encoding, mod_rm)?
+                }
                 _ => return Err(DisassemblerError::InvalidOpcode(opcode)),
             };
 
@@ -396,6 +497,187 @@ impl Disassembler {
         };
 
         Ok(rsi)
+    }
+
+    fn create_modrm_with_reg_mnemonic_encoding_8_4(
+        &mut self,
+        mnemonic_encoding: u8,
+        mod_rm: ModRm8,
+    ) -> Result<Opcode, DisassemblerError> {
+        let mnemonic = match mnemonic_encoding {
+            0b000 => Opcode::IncModRm8(mod_rm),
+            0b001 => Opcode::DecModRm8(mod_rm),
+            0b010 => todo!(),
+            0b011 => todo!(),
+            0b100 => todo!(),
+            0b101 => todo!(),
+            0b110 => todo!(),
+            0b111 => todo!(),
+            _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
+        };
+
+        Ok(mnemonic)
+    }
+
+    fn create_modrm_with_reg_mnemonic_encoding_16_4(
+        &mut self,
+        mnemonic_encoding: u8,
+        mod_rm: ModRm16,
+    ) -> Result<Opcode, DisassemblerError> {
+        let mnemonic = match mnemonic_encoding {
+            0b000 => Opcode::IncModRm16(mod_rm),
+            0b001 => Opcode::DecModRm16(mod_rm),
+            0b010 => Opcode::CallModRm16(mod_rm),
+            0b011 => match mod_rm {
+                ModRm16::Register(_) => panic!("Uhoh!!"),
+                ModRm16::EffectiveAddr(mem_index) => Opcode::CallMem16(mem_index),
+            },
+            0b100 => Opcode::JmpModRm16(mod_rm),
+            0b101 => match mod_rm {
+                ModRm16::Register(_) => panic!("Uhoh!!"),
+                ModRm16::EffectiveAddr(mem_index) => Opcode::JmpMem16(mem_index),
+            },
+            0b110 => {
+                Opcode::PushModRm16(mod_rm)
+                // match mod_rm {
+                //     ModRm16::Register(_) => panic!("Uhoh!!"),
+                //     ModRm16::EffectiveAddr(mem_index) => Opcode::PushMem16(mem_index),
+                // }
+            }
+            0b111 => Opcode::PushModRm16(mod_rm),
+            _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
+        };
+
+        Ok(mnemonic)
+    }
+
+    fn create_modrm_with_reg_mnemonic_encoding_8_3(
+        &mut self,
+        mnemonic_encoding: u8,
+        mod_rm: ModRm8,
+    ) -> Result<Opcode, DisassemblerError> {
+        let mnemonic = match mnemonic_encoding {
+            0b000 => Opcode::TestToModRmFromImmed8(mod_rm, self.parse_byte()),
+            0b001 => Opcode::TestToModRmFromImmed8(mod_rm, self.parse_byte()),
+            0b010 => Opcode::NotToModRm8(mod_rm),
+            0b011 => Opcode::NegToModRm8(mod_rm),
+            0b100 => Opcode::MulToModRm8(mod_rm),
+            0b101 => Opcode::ImulToModRm8(mod_rm),
+            0b110 => Opcode::DivToModRm8(mod_rm),
+            0b111 => Opcode::IdivToModRm8(mod_rm),
+            _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
+        };
+
+        Ok(mnemonic)
+    }
+
+    fn create_modrm_with_reg_mnemonic_encoding_16_3(
+        &mut self,
+        mnemonic_encoding: u8,
+        mod_rm: ModRm16,
+    ) -> Result<Opcode, DisassemblerError> {
+        let mnemonic = match mnemonic_encoding {
+            0b000 => Opcode::TestToModRmFromImmed16(mod_rm, self.parse_word()),
+            0b001 => Opcode::TestToModRmFromImmed16(mod_rm, self.parse_word()),
+            0b010 => Opcode::NotToModRm16(mod_rm),
+            0b011 => Opcode::NegToModRm16(mod_rm),
+            0b100 => Opcode::MulToModRm16(mod_rm),
+            0b101 => Opcode::ImulToModRm16(mod_rm),
+            0b110 => Opcode::DivToModRm16(mod_rm),
+            0b111 => Opcode::IdivToModRm16(mod_rm),
+            _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
+        };
+
+        Ok(mnemonic)
+    }
+
+    // TODO: Differentiate between the opcode extension variant in the error type
+    fn create_modrm_with_reg_mnemonic_encoding_8_2(
+        mnemonic_encoding: u8,
+        mod_rm: ModRm8,
+    ) -> Result<Opcode, DisassemblerError> {
+        let mnemonic = match mnemonic_encoding {
+            0b000 => Opcode::RolToModRm8(mod_rm),
+            0b001 => Opcode::RorToModRm8(mod_rm),
+            0b010 => Opcode::RclToModRm8(mod_rm),
+            0b011 => Opcode::RcrToModRm8(mod_rm),
+            0b100 => Opcode::ShlToModRm8(mod_rm),
+            0b101 => Opcode::ShrToModRm8(mod_rm),
+
+            // TODO: The manual says 0b110 is unused but there exist tests for it
+            0b110 => Opcode::SetmoToModRm8(mod_rm),
+
+            0b111 => Opcode::SarToModRm8(mod_rm),
+            _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
+        };
+
+        Ok(mnemonic)
+    }
+
+    fn create_modrm_with_reg_mnemonic_encoding_16_2(
+        mnemonic_encoding: u8,
+        mod_rm: ModRm16,
+    ) -> Result<Opcode, DisassemblerError> {
+        let mnemonic = match mnemonic_encoding {
+            0b000 => Opcode::RolToModRm16(mod_rm),
+            0b001 => Opcode::RorToModRm16(mod_rm),
+            0b010 => Opcode::RclToModRm16(mod_rm),
+            0b011 => Opcode::RcrToModRm16(mod_rm),
+            0b100 => Opcode::ShlToModRm16(mod_rm),
+            0b101 => Opcode::ShrToModRm16(mod_rm),
+
+            // TODO: The manual says 0b110 is unused but there exist tests for it
+            0b110 => Opcode::SetmoToModRm16(mod_rm),
+
+            0b111 => Opcode::SarToModRm16(mod_rm),
+            _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
+        };
+
+        Ok(mnemonic)
+    }
+
+    fn create_modrm_with_reg_mnemonic_encoding_8_2_cl(
+        mnemonic_encoding: u8,
+        mod_rm: ModRm8,
+    ) -> Result<Opcode, DisassemblerError> {
+        let mnemonic = match mnemonic_encoding {
+            0b000 => Opcode::RolToModRm8CL(mod_rm),
+            0b001 => Opcode::RorToModRm8CL(mod_rm),
+            0b010 => Opcode::RclToModRm8CL(mod_rm),
+            0b011 => Opcode::RcrToModRm8CL(mod_rm),
+            0b100 => Opcode::ShlToModRm8CL(mod_rm),
+            0b101 => Opcode::ShrToModRm8CL(mod_rm),
+
+            // TODO: The manual says 0b110 is unused but there exist tests for it
+            0b110 => Opcode::SetmoToModRm8CL(mod_rm),
+
+            0b111 => Opcode::SarToModRm8CL(mod_rm),
+            _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
+        };
+
+        Ok(mnemonic)
+    }
+
+    fn create_modrm_with_reg_mnemonic_encoding_16_2_cl(
+        mnemonic_encoding: u8,
+        mod_rm: ModRm16,
+    ) -> Result<Opcode, DisassemblerError> {
+        let mnemonic = match mnemonic_encoding {
+            0b000 => Opcode::RolToModRm16CL(mod_rm),
+            0b001 => Opcode::RorToModRm16CL(mod_rm),
+            0b010 => Opcode::RclToModRm16CL(mod_rm),
+            0b011 => Opcode::RcrToModRm16CL(mod_rm),
+            0b100 => Opcode::ShlToModRm16CL(mod_rm),
+            0b101 => Opcode::ShrToModRm16CL(mod_rm),
+
+            // TODO: The manual says 0b110 is unused but there exist tests for it
+            0b110 => Opcode::SetmoToModRm16CL(mod_rm),
+
+            0b111 => Opcode::SarToModRm16CL(mod_rm),
+            _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
+        };
+
+        Ok(mnemonic)
     }
 
     fn create_modrm_with_reg_mnemonic_encoding_8(
@@ -465,6 +747,10 @@ impl Disassembler {
 
     fn parse_short_label(&mut self) -> i16 {
         ((self.parse_byte() as i8 as isize) + (self.index as isize)) as i16
+    }
+
+    fn parse_jump_word(&mut self) -> i16 {
+        ((self.parse_word() as i16 as isize) + (self.index as isize)) as i16
     }
 
     fn parse_mod_sr_rm(
@@ -621,6 +907,7 @@ mod tests {
         let mut num_wrong = 0;
         for test_spec in test_list {
             let mut disassembler = Disassembler::from_bytes(test_spec.bytes.clone());
+            println!("{:#?}", test_spec);
             disassembler.disassemble().unwrap();
             let observed_name = disassembler.dump();
 
@@ -638,24 +925,57 @@ mod tests {
         assert_eq!(num_wrong, 0);
     }
 
+    // #[test]
+    fn test_specific() {
+        let bytes = vec![46, 243, 246, 248];
+        let mut disassembler = Disassembler::from_bytes(bytes.clone());
+        disassembler.disassemble().unwrap();
+        let observed_name = disassembler.dump();
+
+        // 0b11001111 0b10101100
+
+        assert_eq!(observed_name, "idiv al");
+    }
+
     #[test]
     fn test_a_lot() {
+        // NOTE: Tests are not available for [0xF0, 0xF4]
         // TODO: Look into why tests for 0x9B are missing
         // TODO: Complete tests 0xA4-0xA7 and 0xAA-0xAF and 0xC8-0xC9
         // TODO: Figure out what to do with opcodes that the manual says are unused but tests
+        // TODO: 0xE6 and 0xE7 in the tests appear to have the operands flipped?
         // produce instructions for
+        // TODO: 0xF6 (similarly for 0xF7) has [46, 243, 246, 248] `idiv al`. I believe this is illegal according to the
+        // manual but the CPU still does something because the hardware didn't yet handle illegal
+        // opcodes
         let unused_opcodes = vec![
             0x0F, 0x26, 0x2E, 0x36, 0x3E, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68,
             0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F, 0x9B, 0xA4, 0xA5, 0xA6, 0xA7, 0xAA, 0xAB,
-            0xAC, 0xAD, 0xAE, 0xAF, 0xC0, 0xC1, 0xC8, 0xC9,
+            0xAC, 0xAD, 0xAE, 0xAF, 0xC0, 0xC1, 0xC8, 0xC9, 0xD6, 0xE6, 0xE7, 0xF0, 0xF1, 0xF2,
+            0xF3, 0xF4, 0xF6, 0xF7,
         ];
-        for opcode in 0x00..0xCB {
+        for opcode in 0x00..0x100 {
             if unused_opcodes.contains(&opcode) {
                 continue;
             }
 
-            if opcode == 0x80 || opcode == 0x81 || opcode == 0x82 || opcode == 0x83 {
+            if opcode == 0x80
+                || opcode == 0x81
+                || opcode == 0x82
+                || opcode == 0x83
+                || opcode == 0xD0
+                || opcode == 0xD1
+                || opcode == 0xD2
+                || opcode == 0xD3
+                || opcode == 0xF6
+                || opcode == 0xF7
+                || opcode == 0xFE
+                || opcode == 0xFF
+            {
                 for variant in [0, 1, 2, 3, 4, 5, 6, 7] {
+                    if opcode == 0xFE && variant > 1 {
+                        continue;
+                    }
                     run_tests_in_file(&format!("{:02X}.{}", opcode, variant));
                 }
             } else {

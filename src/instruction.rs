@@ -45,7 +45,11 @@ pub enum Opcode {
     // push
     PushSR(SegmentRegister),
     PushGR16(GeneralRegister16),
-    // PushMem(MemoryIndex),
+    // PushMem16(MemoryIndex),
+
+    // TODO: The manual says this is MEM16, but there's at least one hardware generated test that has a
+    // register as input
+    PushModRm16(ModRm16),
 
     // // pop
     PopSR(SegmentRegister),
@@ -136,11 +140,13 @@ pub enum Opcode {
 
     // inc
     IncGR16(GeneralRegister16),
-    // IncModRm(ModRm),
+    IncModRm8(ModRm8),
+    IncModRm16(ModRm16),
 
     // dec
     DecGR16(GeneralRegister16),
-    // DecModRm(ModRm),
+    DecModRm8(ModRm8),
+    DecModRm16(ModRm16),
 
     // Is i16 correct?
     Jb(i16),
@@ -159,7 +165,7 @@ pub enum Opcode {
     Jnl(i16),
     Jle(i16),
     Jnle(i16),
-    // Jcxz(u16),
+    Jcxz(i16),
 
     // test
     TestFromReg8(ModRm8, GeneralRegister8),
@@ -235,8 +241,9 @@ pub enum Opcode {
 
     // call
     CallFarProc(String),
-    // CallModRm(ModRm) // (intra)
-    // CallMem(MemoryIndex) // (intersegment)
+    CallNearProc(String),
+    CallModRm16(ModRm16),
+    CallMem16(MemoryIndex),
     Wait,
     PushF,
     PopF,
@@ -265,85 +272,108 @@ pub enum Opcode {
     // ScaSDestStr16,
 
     // ret
-    RetImmed16(u16), // intraseg
+    RetIntraSegImmed16(u16),
     RetIntraSeg,
-    // RetImmed16,  // intersegment
-    RetInterSeg(u16),
+    RetInterSegImmed16(u16),
+    RetInterSeg,
 
     // les
     LesToReg(GeneralRegister16, MemoryIndex),
 
     // lds
     LdsToReg(GeneralRegister16, MemoryIndex),
-    // // int
-    // Int3,
-    // IntFromImmed8(u8),
 
-    // // into
-    // Into,
+    // int
+    Int3,
+    IntFromImmed8(u8),
 
-    // // iret
-    // Iret,
+    // into
+    Into,
 
-    // // rol
-    // RolToModRm1(ModRm),
-    // RolToModRmCL(ModRm),
+    // iret
+    Iret,
 
-    // // ror
-    // RorToModRm1(ModRm),
-    // RorToModRmCL(ModRm),
+    // rol
+    RolToModRm8(ModRm8),
+    RolToModRm16(ModRm16),
+    RolToModRm8CL(ModRm8),
+    RolToModRm16CL(ModRm16),
 
-    // // rcl
-    // RclToModRm1(ModRm),
-    // RclToModRmCL(ModRm),
+    // ror
+    RorToModRm8(ModRm8),
+    RorToModRm16(ModRm16),
+    RorToModRm8CL(ModRm8),
+    RorToModRm16CL(ModRm16),
 
-    // // rcr
-    // RcrToModRm1(ModRm),
-    // RcrToModRmCL(ModRm),
+    // rcl
+    RclToModRm8(ModRm8),
+    RclToModRm16(ModRm16),
+    RclToModRm8CL(ModRm8),
+    RclToModRm16CL(ModRm16),
 
-    // // sal
-    // SalToModRm1(ModRm),
-    // SalToModRmCL(ModRm),
+    // rcr
+    RcrToModRm8(ModRm8),
+    RcrToModRm16(ModRm16),
+    RcrToModRm8CL(ModRm8),
+    RcrToModRm16CL(ModRm16),
 
-    // // shr
-    // ShrToModRm1(ModRm),
-    // ShrToModRmCL(ModRm),
+    // shl
+    ShlToModRm8(ModRm8),
+    ShlToModRm16(ModRm16),
+    ShlToModRm8CL(ModRm8),
+    ShlToModRm16CL(ModRm16),
 
-    // // sar
-    // SarToModRm1(ModRm),
-    // SarToModRmCL(ModRm),
+    // shr
+    ShrToModRm8(ModRm8),
+    ShrToModRm16(ModRm16),
+    ShrToModRm8CL(ModRm8),
+    ShrToModRm16CL(ModRm16),
 
-    // // aam
-    // Aam,
+    // sar
+    SetmoToModRm8(ModRm8),
+    SarToModRm8(ModRm8),
+    SetmoToModRm16(ModRm16),
+    SarToModRm16(ModRm16),
+    SetmoToModRm8CL(ModRm8),
+    SarToModRm8CL(ModRm8),
+    SetmoToModRm16CL(ModRm16),
+    SarToModRm16CL(ModRm16),
 
-    // // aad
-    // Aad,
+    // aam
+    Aam(u8),
 
-    // // xlat
-    // XlatSourceTable,
+    // aad
+    Aad(u8),
 
-    // // esc
-    // // EscFromSourceToOpcode(u8, ()),
+    // xlat
+    Xlat,
 
-    // // loopnz
-    // // LoopnzShortLabel,
+    // esc
+    Esc(ModRm16),
 
-    // // loopz
-    // // LoopzShortLabel,
+    // loopnz/loopne
+    Loopne(i16),
 
-    // // loop
-    // // LoopShortLabel,
+    // loopz/loope
+    Loope(i16),
 
-    // // in
-    // InToALFromDX,
-    // InToAXFromDX,
+    // loop
+    Loop(i16),
 
-    // // out
-    // OutToALFromDX,
-    // OutToAXFromDX,
+    // in
+    InToALFromImmed8(u8),
+    InToAXFromImmed8(u8),
+    InToALFromDX,
+    InToAXFromDX,
 
-    // // lock
-    // // Lock(<prefix>),
+    // out
+    OutToALFromImmed8(u8),
+    OutToAXFromImmed8(u8),
+    OutToDXFromAL,
+    OutToDXFromAX,
+
+    // lock
+    Lock,
 
     // // repnz
     // Repnz,
@@ -351,51 +381,60 @@ pub enum Opcode {
     // // repz
     // Repz,
 
-    // // hlt
-    // Hlt,
+    // hlt
+    Hlt,
 
-    // // cmc
-    // Cmc,
+    // cmc
+    Cmc,
 
-    // // not
-    // NotModRm(ModRm),
+    // not
+    NotToModRm8(ModRm8),
+    NotToModRm16(ModRm16),
 
-    // // neg
-    // NegModRm(ModRm),
+    // neg
+    NegToModRm8(ModRm8),
+    NegToModRm16(ModRm16),
 
-    // // mul
-    // MulModRm(ModRm),
+    // mul
+    MulToModRm8(ModRm8),
+    MulToModRm16(ModRm16),
 
-    // // imul
-    // ImulModRm(ModRm),
+    // imul
+    ImulToModRm8(ModRm8),
+    ImulToModRm16(ModRm16),
 
-    // // div
-    // DivModRm(ModRm),
+    // div
+    DivToModRm8(ModRm8),
+    DivToModRm16(ModRm16),
 
-    // // idiv
-    // IdivModRm(ModRm),
+    // idiv
+    IdivToModRm8(ModRm8),
+    IdivToModRm16(ModRm16),
 
-    // // clc
-    // Clc,
+    // clc
+    Clc,
 
-    // // stc
-    // Stc,
+    // stc
+    Stc,
 
-    // // cli
-    // Cli,
+    // cli
+    Cli,
 
-    // // Sti
-    // Sti,
+    // Sti
+    Sti,
 
-    // // cld
-    // Cld,
+    // cld
+    Cld,
 
-    // // std
-    // Std,
+    // std
+    Std,
 
-    // // jmp
-    // JmpModRm(ModRm), // intra
-    // JmpMem(MemoryIndex), // intersegment
+    // jmp
+    JmpNearLabel(String),
+    JmpFarLabel(String),
+    JmpShortLabel(i16),
+    JmpModRm16(ModRm16),
+    JmpMem16(MemoryIndex),
 }
 
 impl_opcodes_display!(
