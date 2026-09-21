@@ -867,12 +867,43 @@ impl Disassembler {
 mod tests {
     use super::*;
 
-    use std::fs;
+    use std::collections::HashMap;
     use std::io;
     use std::io::Write;
+    use std::path::Path;
+    use std::path::PathBuf;
+    use std::{fs, io::Read};
 
     use flate2::bufread::GzDecoder;
+    use reqwest::StatusCode;
     use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize, Debug)]
+    struct TestMetadata {
+        opcodes: HashMap<String, OpcodeMetadata>,
+    }
+
+    #[derive(Serialize, Deserialize, Debug)]
+    struct Normal {
+        status: String,
+    }
+
+    #[derive(Serialize, Deserialize, Debug)]
+    struct Status {
+        status: String,
+    }
+
+    #[derive(Serialize, Deserialize, Debug)]
+    struct OpcodeExtension {
+        reg: HashMap<String, Status>,
+    }
+
+    #[derive(Serialize, Deserialize, Debug)]
+    #[serde(rename_all = "lowercase", untagged)]
+    enum OpcodeMetadata {
+        Normal(Normal),
+        OpcodeExtension(OpcodeExtension),
+    }
 
     #[derive(Serialize, Deserialize, Debug)]
     struct TestSpec {
@@ -880,59 +911,111 @@ mod tests {
         bytes: Vec<u8>,
     }
 
-    fn run_tests_in_file(opcode: &str) {
-        dbg!(opcode);
-        let filename = format!("/tmp/test_files/{}", opcode);
-        let bytes = match fs::read(&filename) {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                match err.kind() {
-                    io::ErrorKind::NotFound => {
-                        let response = reqwest::blocking::get(format!("https://github.com/SingleStepTests/8088/raw/refs/heads/main/v2/{}.json.gz", opcode)).unwrap();
-                        let bytes = response.bytes().unwrap();
+    #[test]
+    fn hardware_generated_tests() {
+        let base_url = "https://github.com/SingleStepTests/8088/raw/refs/heads/main/v2/";
 
-                        let decoder = GzDecoder::new(&bytes[..]);
-                        let test_list: Vec<TestSpec> = serde_json::from_reader(decoder).unwrap();
+        let mut response = reqwest::blocking::get(format!("{}{}", &base_url, "metadata.json"))
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        let mut response_str = String::new();
+        let _ = response.read_to_string(&mut response_str).unwrap();
 
-                        let parent_dir = std::path::Path::new(&filename).parent().unwrap();
-                        fs::create_dir_all(parent_dir).unwrap();
+        let test_metadata: TestMetadata = serde_json::from_str(&response_str).unwrap();
 
-                        let file = fs::File::create(filename)
-                            .expect("Should be able to create the file as it won't exist");
-                        let mut buf_writer = io::BufWriter::new(file);
+        let curr_file_path = Path::new(file!());
+        let tests_folder_path = curr_file_path
+            .parent()
+            .unwrap()
+            .join("hardware_generated_tests");
+        fs::create_dir_all(&tests_folder_path).unwrap();
 
-                        let _ = serde_json::to_writer_pretty(&mut buf_writer, &test_list);
-
-                        buf_writer.flush().unwrap();
-
-                        serde_json::to_vec(&test_list).unwrap()
-                    }
-                    _ => panic!("unexpected error when reading file {}: {}", filename, err),
-                }
+        for (opcode, metadata) in test_metadata.opcodes.iter() {
+            // TODO: 0xF6 (similarly for 0xF7) has [46, 243, 246, 248] `idiv al`. I believe this is illegal according to the
+            // manual but the CPU still does something because the hardware didn't yet handle illegal
+            // opcodes
+            if opcode == "F6" || opcode == "F7" {
+                continue;
             }
-        };
 
-        let test_list: Vec<TestSpec> = serde_json::from_slice(&bytes).unwrap();
+            let filenames = match metadata {
+                OpcodeMetadata::Normal(Normal { status }) => {
+                    if status == "prefix" {
+                        vec![]
+                    } else {
+                        vec![opcode.clone()]
+                    }
+                }
+                OpcodeMetadata::OpcodeExtension(ext) => ext
+                    .reg
+                    .keys()
+                    .map(|ext_component| format!("{}.{}", opcode, ext_component))
+                    .collect(),
+            };
 
-        let mut num_wrong = 0;
-        for test_spec in test_list {
-            let mut disassembler = Disassembler::from_bytes(test_spec.bytes.clone());
-            // println!("{:#?}", test_spec);
-            disassembler.disassemble().unwrap();
-            let observed_name = disassembler.dump();
+            for name in filenames {
+                let filename = tests_folder_path.as_path().join(&name);
+                let bytes = match fs::read(&filename) {
+                    Ok(bytes) => bytes,
+                    Err(err) => match err.kind() {
+                        io::ErrorKind::NotFound => {
+                            let response = match reqwest::blocking::get(format!(
+                                "{}{}.json.gz",
+                                base_url, &name
+                            ))
+                            .unwrap()
+                            .error_for_status()
+                            {
+                                Ok(resp) => resp,
+                                Err(err) if err.status() == Some(StatusCode::NOT_FOUND) => continue,
+                                Err(err) => panic!("Request failed: {}", err),
+                            };
 
-            if observed_name != test_spec.name {
-                num_wrong += 1;
+                            let bytes = response.bytes().unwrap();
 
-                println!(
-                    "observed: \"{}\"\nexpected: {:#?}\n",
-                    observed_name, test_spec
-                );
+                            let decoder = GzDecoder::new(&bytes[..]);
+                            let test_list: Vec<TestSpec> = serde_json::from_reader(decoder)
+                                .expect(&format!("Unable to deserialize {:?}", filename));
+
+                            let parent_dir = Path::new(&filename).parent().unwrap();
+                            fs::create_dir_all(parent_dir).unwrap();
+
+                            let file = fs::File::create(filename)
+                                .expect("Should be able to create the file as it won't exist");
+                            let mut buf_writer = io::BufWriter::new(file);
+
+                            let _ = serde_json::to_writer_pretty(&mut buf_writer, &test_list);
+
+                            buf_writer.flush().unwrap();
+
+                            serde_json::to_vec(&test_list).unwrap()
+                        }
+                        _ => panic!("unexpected error when reading file {:?}: {}", filename, err),
+                    },
+                };
+
+                let test_list: Vec<TestSpec> = serde_json::from_slice(&bytes).unwrap();
+
+                let mut num_wrong = 0;
+                for test_spec in test_list {
+                    let mut disassembler = Disassembler::from_bytes(test_spec.bytes.clone());
+                    disassembler.disassemble().unwrap();
+                    let observed_name = disassembler.dump();
+
+                    if observed_name != test_spec.name {
+                        num_wrong += 1;
+
+                        println!(
+                            "observed: \"{}\"\nexpected: {:#?}\n",
+                            observed_name, test_spec
+                        );
+                    }
+                }
+
+                assert_eq!(num_wrong, 0);
             }
         }
-
-        dbg!(opcode);
-        assert_eq!(num_wrong, 0);
     }
 
     // #[test]
@@ -955,57 +1038,5 @@ mod tests {
         let observed_name = disassembler.dump();
 
         assert_eq!(observed_name, "wait");
-    }
-
-    #[test]
-    fn test_a_lot() {
-        // NOTE: Opcodes that should actually be skipped:
-        // 0x0F
-        // 0x26
-        // 0x2E
-        // 0x36
-        // 0x3E
-        // 0x9B - There are no tests for WAIT
-        // 0xF0
-        // 0xF1
-        // 0xF2
-        // 0xF3
-        // 0xF4
-        // 0xF6 - I have to figure out how to/if I want to support rep with idiv
-        // 0xF7 - similar situation as 0xF6
-        // TODO: 0xF6 (similarly for 0xF7) has [46, 243, 246, 248] `idiv al`. I believe this is illegal according to the
-        // manual but the CPU still does something because the hardware didn't yet handle illegal
-        // opcodes
-        let unused_opcodes = vec![
-            0x0F, 0x26, 0x2E, 0x36, 0x3E, 0x9B, 0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF6, 0xF7,
-        ];
-        for opcode in 0x00..0x100 {
-            if unused_opcodes.contains(&opcode) {
-                continue;
-            }
-
-            if opcode == 0x80
-                || opcode == 0x81
-                || opcode == 0x82
-                || opcode == 0x83
-                || opcode == 0xD0
-                || opcode == 0xD1
-                || opcode == 0xD2
-                || opcode == 0xD3
-                || opcode == 0xF6
-                || opcode == 0xF7
-                || opcode == 0xFE
-                || opcode == 0xFF
-            {
-                for variant in [0, 1, 2, 3, 4, 5, 6, 7] {
-                    if opcode == 0xFE && variant > 1 {
-                        continue;
-                    }
-                    run_tests_in_file(&format!("{:02X}.{}", opcode, variant));
-                }
-            } else {
-                run_tests_in_file(&format!("{:02X}", opcode));
-            }
-        }
     }
 }
