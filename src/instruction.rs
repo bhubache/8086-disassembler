@@ -21,7 +21,6 @@ impl Instruction {
     }
 }
 
-// TODO: Use more appropriate name like `Opcode`
 #[derive(Debug)]
 pub enum Opcode {
     // Segment Register

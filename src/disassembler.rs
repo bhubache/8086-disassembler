@@ -70,7 +70,6 @@ impl Disassembler {
     }
 
     pub fn disassemble(&mut self) -> Result<(), DisassemblerError> {
-        // dbg!(self.bytes.iter().map(|byte| format!("{}", byte)).collect::<Vec<_>>().join("\n"));
         let mut sr_override = None;
         while self.index < self.bytes.len() {
             let (opcode_index, opcode) = (self.index, self.bytes[self.index]);
@@ -362,28 +361,24 @@ impl Disassembler {
                 0xD0 => {
                     let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
                     let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-                    // let immed = self.parse_byte();
 
                     Self::create_modrm_with_reg_mnemonic_encoding_8_2(mnemonic_encoding, mod_rm)?
                 }
                 0xD1 => {
                     let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
                     let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-                    // let immed = self.parse_byte();
 
                     Self::create_modrm_with_reg_mnemonic_encoding_16_2(mnemonic_encoding, mod_rm)?
                 }
                 0xD2 => {
                     let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
                     let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-                    // let immed = self.parse_byte();
 
                     Self::create_modrm_with_reg_mnemonic_encoding_8_2_cl(mnemonic_encoding, mod_rm)?
                 }
                 0xD3 => {
                     let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
                     let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-                    // let immed = self.parse_byte();
 
                     Self::create_modrm_with_reg_mnemonic_encoding_16_2_cl(
                         mnemonic_encoding,
@@ -542,13 +537,7 @@ impl Disassembler {
                 ModRm16::Register(_) => panic!("Uhoh!!"),
                 ModRm16::EffectiveAddr(mem_index) => Opcode::JmpMem16(mem_index),
             },
-            0b110 => {
-                Opcode::PushModRm16(mod_rm)
-                // match mod_rm {
-                //     ModRm16::Register(_) => panic!("Uhoh!!"),
-                //     ModRm16::EffectiveAddr(mem_index) => Opcode::PushMem16(mem_index),
-                // }
-            }
+            0b110 => Opcode::PushModRm16(mod_rm),
             0b111 => Opcode::PushModRm16(mod_rm),
             _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
         };
@@ -1011,18 +1000,6 @@ mod tests {
                 assert_eq!(num_wrong, 0);
             }
         }
-    }
-
-    // #[test]
-    fn test_specific() {
-        let bytes = vec![46, 243, 246, 248];
-        let mut disassembler = Disassembler::from_bytes(bytes.clone());
-        disassembler.disassemble().unwrap();
-        let observed_name = disassembler.dump();
-
-        // 0b11001111 0b10101100
-
-        assert_eq!(observed_name, "idiv al");
     }
 
     #[test]
