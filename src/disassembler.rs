@@ -1,7 +1,5 @@
 use std::fs;
 
-use flate2::write;
-
 use crate::instruction::Instruction;
 use crate::instruction::Opcode;
 use crate::instruction::RepeatableStringInstruction;
