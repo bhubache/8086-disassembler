@@ -9,9 +9,9 @@ repos:
 
   - repo: local
     hooks:
-      - id: format rust
-        name: Format Rust
-        entry: just fmt
+      - id: lint rust
+        name: Lint Rust
+        entry: just lint
         types: [rust]
         language: system
         pass_filenames: false
