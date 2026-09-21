@@ -396,7 +396,7 @@ impl Disassembler {
                 0xD5 => Opcode::Aad(self.parse_byte()),
                 0xD6 => Opcode::Salc,
                 0xD7 => Opcode::Xlat,
-                0xD8 | 0xD9 | 0xDA | 0xDB | 0xDC | 0xDD | 0xDE | 0xDF => {
+                0xD8..=0xDF => {
                     let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
                     Opcode::Esc(mod_rm)
                 }
@@ -869,7 +869,7 @@ mod tests {
     use std::io;
     use std::io::Write;
     use std::path::Path;
-    use std::path::PathBuf;
+
     use std::{fs, io::Read};
 
     use flate2::bufread::GzDecoder;
@@ -913,7 +913,7 @@ mod tests {
     fn hardware_generated_tests() {
         let base_url = "https://github.com/SingleStepTests/8088/raw/refs/heads/main/v2/";
 
-        let mut response = reqwest::blocking::get(format!("{}{}", &base_url, "metadata.json"))
+        let mut response = reqwest::blocking::get(format!("{}{}", base_url, "metadata.json"))
             .unwrap()
             .error_for_status()
             .unwrap();
@@ -960,7 +960,7 @@ mod tests {
                         io::ErrorKind::NotFound => {
                             let response = match reqwest::blocking::get(format!(
                                 "{}{}.json.gz",
-                                base_url, &name
+                                base_url, name
                             ))
                             .unwrap()
                             .error_for_status()
@@ -974,7 +974,7 @@ mod tests {
 
                             let decoder = GzDecoder::new(&bytes[..]);
                             let test_list: Vec<TestSpec> = serde_json::from_reader(decoder)
-                                .expect(&format!("Unable to deserialize {:?}", filename));
+                                .unwrap_or_else(|_| panic!("Unable to deserialize {:?}", filename));
 
                             let parent_dir = Path::new(&filename).parent().unwrap();
                             fs::create_dir_all(parent_dir).unwrap();
