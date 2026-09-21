@@ -21,7 +21,6 @@ use crate::rm::RM;
 
 #[derive(Debug)]
 pub enum DisassemblerError {
-    InvalidOpcode(u8),
     InvalidMode(u8),
     InvalidRM(u8),
     InvalidOpcodeExtension(u8),
@@ -31,7 +30,6 @@ pub enum DisassemblerError {
 impl std::fmt::Display for DisassemblerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidOpcode(opcode) => write!(f, "invalid opcode `{:08b}`", opcode),
             Self::InvalidMode(mode) => write!(f, "invalid mode `{:02b}`", mode),
             Self::InvalidRM(rm) => write!(f, "invalid rm `{:03b}`", rm),
             Self::InvalidOpcodeExtension(value) => {
@@ -456,7 +454,6 @@ impl Disassembler {
 
                     self.create_modrm_with_reg_mnemonic_encoding_16_4(mnemonic_encoding, mod_rm)?
                 }
-                _ => return Err(DisassemblerError::InvalidOpcode(opcode)),
             };
 
             match mnemonic {
