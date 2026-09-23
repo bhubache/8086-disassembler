@@ -1,7 +1,22 @@
-use crate::disassembler::DisassemblerError;
+use std::fmt;
+
+#[derive(Debug)]
+pub struct InvalidRmEncoding(u8);
+
+impl fmt::Display for InvalidRmEncoding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "invalid rm encoding {:03b}; expected a value in the range 0b000 - 0b111",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for InvalidRmEncoding {}
 
 #[derive(Debug, PartialEq)]
-pub enum RM {
+pub enum RmCode {
     Rm000,
     Rm001,
     Rm010,
@@ -12,35 +27,34 @@ pub enum RM {
     Rm111,
 }
 
-impl RM {
-    pub fn from_byte(byte: u8) -> Result<RM, DisassemblerError> {
-        RM::from_encoding(byte & 0b000111)
+impl RmCode {
+    pub fn from_modrm(value: u8) -> Self {
+        Self::from_3_bits(value & 0b000111)
     }
 
-    pub fn from_encoding(rm: u8) -> Result<RM, DisassemblerError> {
-        match rm {
-            0b000 => Ok(RM::Rm000),
-            0b001 => Ok(RM::Rm001),
-            0b010 => Ok(RM::Rm010),
-            0b011 => Ok(RM::Rm011),
-            0b100 => Ok(RM::Rm100),
-            0b101 => Ok(RM::Rm101),
-            0b110 => Ok(RM::Rm110),
-            0b111 => Ok(RM::Rm111),
-            _ => Err(DisassemblerError::InvalidRM(rm)),
+    fn from_3_bits(value: u8) -> Self {
+        match value {
+            0b000 => Self::Rm000,
+            0b001 => Self::Rm001,
+            0b010 => Self::Rm010,
+            0b011 => Self::Rm011,
+            0b100 => Self::Rm100,
+            0b101 => Self::Rm101,
+            0b110 => Self::Rm110,
+            0b111 => Self::Rm111,
+            _ => unreachable!("caller guarantees a 3-bit value"),
         }
     }
+}
 
-    pub fn to_encoding(&self) -> u8 {
-        match self {
-            Self::Rm000 => 0b000,
-            Self::Rm001 => 0b001,
-            Self::Rm010 => 0b010,
-            Self::Rm011 => 0b011,
-            Self::Rm100 => 0b100,
-            Self::Rm101 => 0b101,
-            Self::Rm110 => 0b110,
-            Self::Rm111 => 0b111,
+impl TryFrom<u8> for RmCode {
+    type Error = InvalidRmEncoding;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        if value > 0b111 {
+            Err(InvalidRmEncoding(value))
+        } else {
+            Ok(Self::from_3_bits(value))
         }
     }
 }

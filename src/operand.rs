@@ -1,9 +1,10 @@
 use std::fmt;
 
-use crate::register::GeneralRegister8;
+use crate::prefixes::Prefixes;
 use crate::register::GeneralRegister16;
 use crate::register::SegmentRegister;
-use crate::register::SizedRegister;
+
+use crate::width::OpWidth;
 
 #[derive(Debug, Copy, Clone)]
 pub enum Immediate {
@@ -29,63 +30,27 @@ impl fmt::UpperHex for Immediate {
     }
 }
 
-pub trait SizedModRm {
-    type Reg: SizedRegister;
-
-    fn from_register(reg: Self::Reg) -> Self;
-    fn from_mem(mem: MemoryIndex) -> Self;
-}
-
 #[derive(Debug)]
-pub enum ModRm8 {
-    Register(GeneralRegister8),
+pub enum ModRm<W: OpWidth> {
+    Register(W::Register),
     EffectiveAddr(MemoryIndex),
 }
 
-impl SizedModRm for ModRm8 {
-    type Reg = GeneralRegister8;
-
-    fn from_register(reg: GeneralRegister8) -> Self {
+impl<W: OpWidth> ModRm<W> {
+    pub fn from_register(reg: W::Register) -> Self {
         Self::Register(reg)
     }
 
-    fn from_mem(mem: MemoryIndex) -> Self {
+    pub fn from_mem(mem: MemoryIndex) -> Self {
         Self::EffectiveAddr(mem)
     }
 }
 
-impl fmt::Display for ModRm8 {
+impl<W: OpWidth> fmt::Display for ModRm<W> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Register(gen_reg) => write!(f, "{}", gen_reg),
-            Self::EffectiveAddr(mem_index) => write!(f, "byte {}", mem_index),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum ModRm16 {
-    Register(GeneralRegister16),
-    EffectiveAddr(MemoryIndex),
-}
-
-impl SizedModRm for ModRm16 {
-    type Reg = GeneralRegister16;
-
-    fn from_register(reg: GeneralRegister16) -> Self {
-        Self::Register(reg)
-    }
-
-    fn from_mem(mem: MemoryIndex) -> Self {
-        Self::EffectiveAddr(mem)
-    }
-}
-
-impl fmt::Display for ModRm16 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Register(gen_reg) => write!(f, "{}", gen_reg),
-            Self::EffectiveAddr(mem_index) => write!(f, "word {}", mem_index),
+            Self::EffectiveAddr(mem_index) => write!(f, "{} {}", W::MEMORY_SIZE, mem_index),
         }
     }
 }
@@ -99,11 +64,8 @@ pub struct MemoryIndex {
 }
 
 impl MemoryIndex {
-    pub fn with_immediate(
-        displacement: Immediate,
-        maybe_sr: Option<SegmentRegister>,
-    ) -> MemoryIndex {
-        let sr = match maybe_sr {
+    pub fn with_immediate(displacement: Immediate, prefixes: &Prefixes) -> MemoryIndex {
+        let sr = match prefixes.sr_override {
             Some(seg_reg) => seg_reg,
             None => SegmentRegister::DS,
         };

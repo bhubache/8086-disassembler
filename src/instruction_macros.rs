@@ -1,19 +1,19 @@
 #[macro_export]
 macro_rules! impl_opcodes_display {
     ( $( ($prefix:ident, $name:expr) ),* ) => {
-        impl fmt::Display for Opcode {
+        impl<W: OpWidth> fmt::Display for Opcode<W> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 paste! {
                     match self {
                         $(
-                            Self::[<$prefix FromReg8>](mod_rm, reg) => write!(f, concat!($name, " {}, {}"), mod_rm, reg),
-                            Self::[<$prefix FromReg16>](mod_rm, reg) => write!(f, concat!($name, " {}, {}"), mod_rm, reg),
-                            Self::[<$prefix ToReg8>](reg, mod_rm) => write!(f, concat!($name, " {}, {}"), reg, mod_rm),
-                            Self::[<$prefix ToReg16>](reg, mod_rm) => write!(f, concat!($name, " {}, {}"), reg, mod_rm),
-                            Self::[<$prefix ToALFromImmed8>](byte) => write!(f, concat!($name, " al, {:X}h"), byte),
-                            Self::[<$prefix ToAXFromImmed16>](word) => write!(f, concat!($name, " ax, {:X}h"), word),
-                            Self::[<$prefix ToModRmFromImmed8>](mod_rm, immed) => write!(f, concat!($name, " {}, {:X}h"), mod_rm, immed),
-                            Self::[<$prefix ToModRmFromImmed16>](mod_rm, immed) => write!(f, concat!($name, " {}, {:X}h"), mod_rm, immed),
+                            Self::[<$prefix FromReg>](mod_rm, reg) => write!(f, concat!($name, " {}, {}"), mod_rm, reg),
+                            // Self::[<$prefix FromReg16>](mod_rm, reg) => write!(f, concat!($name, " {}, {}"), mod_rm, reg),
+                            Self::[<$prefix ToReg>](reg, mod_rm) => write!(f, concat!($name, " {}, {}"), reg, mod_rm),
+                            // Self::[<$prefix ToReg16>](reg, mod_rm) => write!(f, concat!($name, " {}, {}"), reg, mod_rm),
+                            Self::[<$prefix ToALFromImmed8>](byte) => write!(f, concat!($name, " al, {:X}"), byte),
+                            Self::[<$prefix ToAXFromImmed16>](word) => write!(f, concat!($name, " ax, {:X}"), word),
+                            Self::[<$prefix ToModRmFromImmed>](mod_rm, immed) => write!(f, concat!($name, " {}, {:X}"), mod_rm, immed),
+                            // Self::[<$prefix ToModRmFromImmed16>](mod_rm, immed) => write!(f, concat!($name, " {}, {:X}h"), mod_rm, immed),
                         )*
 
                         Self::SROverride(sr) => write!(f, "{}", sr),
@@ -65,11 +65,9 @@ macro_rules! impl_opcodes_display {
                         Self::Aas => write!(f, "aas"),
 
                         Self::IncGR16(reg) => write!(f, "inc {}", reg),
-                        Self::IncModRm8(mod_rm) => write!(f, "inc {}", mod_rm),
-                        Self::IncModRm16(mod_rm) => write!(f, "inc {}", mod_rm),
+                        Self::IncModRm(mod_rm) => write!(f, "inc {}", mod_rm),
                         Self::DecGR16(reg) => write!(f, "dec {}", reg),
-                        Self::DecModRm8(mod_rm) => write!(f, "dec {}", mod_rm),
-                        Self::DecModRm16(mod_rm) => write!(f, "dec {}", mod_rm),
+                        Self::DecModRm(mod_rm) => write!(f, "dec {}", mod_rm),
 
                         Self::Jb(short_label) => write!(f, "jb {:04X}h", short_label),
                         Self::Jbe(short_label) => write!(f, "jbe {:04X}h", short_label),
@@ -95,10 +93,8 @@ macro_rules! impl_opcodes_display {
                         Self::MovToAXFromMem16(mem_index) => write!(f, "mov ax, word {}", mem_index),
                         Self::MovToMem8FromAL(mem_index) => write!(f, "mov byte {}, al", mem_index),
                         Self::MovToMem16FromAL(mem_index) => write!(f, "mov word {}, ax", mem_index),
-                        Self::MovToGR8FromImmed8(reg, immed) => write!(f, "mov {}, {:X}h", reg, immed),
-                        Self::MovToGR16FromImmed16(reg, immed) => write!(f, "mov {}, {:X}h", reg, immed),
-                        Self::MovToMem8FromImmed8(mod_rm, immed) => write!(f, "mov {}, {:X}h", mod_rm, immed),
-                        Self::MovToMem16FromImmed16(mod_rm, immed) => write!(f, "mov {}, {:X}h", mod_rm, immed),
+                        Self::MovToGRFromImmed(reg, immed) => write!(f, "mov {}, {:X}", reg, immed),
+                        Self::MovToMemFromImmed(mod_rm, immed) => write!(f, "mov {}, {:X}", mod_rm, immed),
 
                         Self::LeaToGR16(reg, mem_index) => write!(f, "lea {}, {}", reg, mem_index),
 
@@ -186,56 +182,41 @@ macro_rules! impl_opcodes_display {
                             }
                         },
 
-                        Self::RetIntraSegImmed16(immed) => write!(f, "retn {:X}h", immed),
+                        Self::RetIntraSegImmed16(immed) => write!(f, "retn {:X}", immed),
                         Self::RetIntraSeg => write!(f, "retn"),
                         Self::RetInterSeg => write!(f, "retf"),
-                        Self::RetInterSegImmed16(immed) => write!(f, "retf {:X}h", immed),
+                        Self::RetInterSegImmed16(immed) => write!(f, "retf {:X}", immed),
 
                         Self::LesToReg(reg, mem_index) => write!(f, "les {}, dword {}", reg, mem_index),
                         Self::LdsToReg(reg, mem_index) => write!(f, "lds {}, dword {}", reg, mem_index),
 
                         Self::Int3 => write!(f, "int3"),
-                        Self::IntFromImmed8(immed) => write!(f, "int {:X}h", immed),
+                        Self::IntFromImmed8(immed) => write!(f, "int {:X}", immed),
 
                         Self::Into => write!(f, "into"),
 
                         Self::Iret => write!(f, "iret"),
 
-                        Self::RolToModRm8(mod_rm) => write!(f, "rol {}", mod_rm),
-                        Self::RorToModRm8(mod_rm) => write!(f, "ror {}", mod_rm),
-                        Self::RclToModRm8(mod_rm) => write!(f, "rcl {}", mod_rm),
-                        Self::RcrToModRm8(mod_rm) => write!(f, "rcr {}", mod_rm),
-                        Self::ShlToModRm8(mod_rm) => write!(f, "shl {}", mod_rm),
-                        Self::ShrToModRm8(mod_rm) => write!(f, "shr {}", mod_rm),
-                        Self::SetmoToModRm8(mod_rm) => write!(f, "setmo {}", mod_rm),
-                        Self::SarToModRm8(mod_rm) => write!(f, "sar {}", mod_rm),
-                        Self::RolToModRm16(mod_rm) => write!(f, "rol {}", mod_rm),
-                        Self::RorToModRm16(mod_rm) => write!(f, "ror {}", mod_rm),
-                        Self::RclToModRm16(mod_rm) => write!(f, "rcl {}", mod_rm),
-                        Self::RcrToModRm16(mod_rm) => write!(f, "rcr {}", mod_rm),
-                        Self::ShlToModRm16(mod_rm) => write!(f, "shl {}", mod_rm),
-                        Self::ShrToModRm16(mod_rm) => write!(f, "shr {}", mod_rm),
-                        Self::SetmoToModRm16(mod_rm) => write!(f, "setmo {}", mod_rm),
-                        Self::SarToModRm16(mod_rm) => write!(f, "sar {}", mod_rm),
-                        Self::RolToModRm8CL(mod_rm) => write!(f, "rol {}, cl", mod_rm),
-                        Self::RorToModRm8CL(mod_rm) => write!(f, "ror {}, cl", mod_rm),
-                        Self::RclToModRm8CL(mod_rm) => write!(f, "rcl {}, cl", mod_rm),
-                        Self::RcrToModRm8CL(mod_rm) => write!(f, "rcr {}, cl", mod_rm),
-                        Self::ShlToModRm8CL(mod_rm) => write!(f, "shl {}, cl", mod_rm),
-                        Self::ShrToModRm8CL(mod_rm) => write!(f, "shr {}, cl", mod_rm),
-                        Self::SetmoToModRm8CL(mod_rm) => write!(f, "setmoc {}, cl", mod_rm),
-                        Self::SarToModRm8CL(mod_rm) => write!(f, "sar {}, cl", mod_rm),
-                        Self::RolToModRm16CL(mod_rm) => write!(f, "rol {}, cl", mod_rm),
-                        Self::RorToModRm16CL(mod_rm) => write!(f, "ror {}, cl", mod_rm),
-                        Self::RclToModRm16CL(mod_rm) => write!(f, "rcl {}, cl", mod_rm),
-                        Self::RcrToModRm16CL(mod_rm) => write!(f, "rcr {}, cl", mod_rm),
-                        Self::ShlToModRm16CL(mod_rm) => write!(f, "shl {}, cl", mod_rm),
-                        Self::ShrToModRm16CL(mod_rm) => write!(f, "shr {}, cl", mod_rm),
-                        Self::SetmoToModRm16CL(mod_rm) => write!(f, "setmoc {}, cl", mod_rm),
-                        Self::SarToModRm16CL(mod_rm) => write!(f, "sar {}, cl", mod_rm),
+                        Self::RolToModRm(mod_rm) => write!(f, "rol {}", mod_rm),
+                        Self::RorToModRm(mod_rm) => write!(f, "ror {}", mod_rm),
+                        Self::RclToModRm(mod_rm) => write!(f, "rcl {}", mod_rm),
+                        Self::RcrToModRm(mod_rm) => write!(f, "rcr {}", mod_rm),
+                        Self::ShlToModRm(mod_rm) => write!(f, "shl {}", mod_rm),
+                        Self::ShrToModRm(mod_rm) => write!(f, "shr {}", mod_rm),
+                        Self::SetmoToModRm(mod_rm) => write!(f, "setmo {}", mod_rm),
+                        Self::SarToModRm(mod_rm) => write!(f, "sar {}", mod_rm),
 
-                        Self::Aam(immed) => write!(f, "aam {:X}h", immed),
-                        Self::Aad(immed) => write!(f, "aad {:X}h", immed),
+                        Self::RolToModRmCL(mod_rm) => write!(f, "rol {}, cl", mod_rm),
+                        Self::RorToModRmCL(mod_rm) => write!(f, "ror {}, cl", mod_rm),
+                        Self::RclToModRmCL(mod_rm) => write!(f, "rcl {}, cl", mod_rm),
+                        Self::RcrToModRmCL(mod_rm) => write!(f, "rcr {}, cl", mod_rm),
+                        Self::ShlToModRmCL(mod_rm) => write!(f, "shl {}, cl", mod_rm),
+                        Self::ShrToModRmCL(mod_rm) => write!(f, "shr {}, cl", mod_rm),
+                        Self::SetmoToModRmCL(mod_rm) => write!(f, "setmoc {}, cl", mod_rm),
+                        Self::SarToModRmCL(mod_rm) => write!(f, "sar {}, cl", mod_rm),
+
+                        Self::Aam(immed) => write!(f, "aam {:X}", immed),
+                        Self::Aad(immed) => write!(f, "aad {:X}", immed),
                         Self::Xlat => write!(f, "xlat"),
 
                         Self::Esc(mod_rm) => write!(f, "esc {}", mod_rm),
@@ -244,13 +225,13 @@ macro_rules! impl_opcodes_display {
                         Self::Loope(short_label) => write!(f, "loope {:04X}h", short_label),
                         Self::Loop(short_label) => write!(f, "loop {:04X}h", short_label),
 
-                        Self::InToALFromImmed8(immed) => write!(f, "in al, {:X}h", immed),
-                        Self::InToAXFromImmed8(immed) => write!(f, "in ax, {:X}h", immed),
+                        Self::InToALFromImmed8(immed) => write!(f, "in al, {:X}", immed),
+                        Self::InToAXFromImmed8(immed) => write!(f, "in ax, {:X}", immed),
                         Self::InToALFromDX => write!(f, "in al, dx"),
                         Self::InToAXFromDX => write!(f, "in ax, dx"),
 
-                        Self::OutToPort8FromAL(immed) => write!(f, "out {:X}h, al", immed),
-                        Self::OutToPort8FromAX(immed) => write!(f, "out {:X}h, ax", immed),
+                        Self::OutToPort8FromAL(immed) => write!(f, "out {:X}, al", immed),
+                        Self::OutToPort8FromAX(immed) => write!(f, "out {:X}, ax", immed),
                         Self::OutToDXFromAL => write!(f, "out dx, al"),
                         Self::OutToDXFromAX => write!(f, "out dx, ax"),
 
@@ -265,18 +246,12 @@ macro_rules! impl_opcodes_display {
                         Self::Hlt => write!(f, "hlt"),
                         Self::Cmc => write!(f, "cmc"),
 
-                        Self::NotToModRm8(mod_rm) => write!(f, "not {}", mod_rm),
-                        Self::NegToModRm8(mod_rm) => write!(f, "neg {}", mod_rm),
-                        Self::MulToModRm8(mod_rm) => write!(f, "mul {}", mod_rm),
-                        Self::ImulToModRm8(mod_rm) => write!(f, "imul {}", mod_rm),
-                        Self::DivToModRm8(mod_rm) => write!(f, "div {}", mod_rm),
-                        Self::IdivToModRm8(mod_rm) => write!(f, "idiv {}", mod_rm),
-                        Self::NotToModRm16(mod_rm) => write!(f, "not {}", mod_rm),
-                        Self::NegToModRm16(mod_rm) => write!(f, "neg {}", mod_rm),
-                        Self::MulToModRm16(mod_rm) => write!(f, "mul {}", mod_rm),
-                        Self::ImulToModRm16(mod_rm) => write!(f, "imul {}", mod_rm),
-                        Self::DivToModRm16(mod_rm) => write!(f, "div {}", mod_rm),
-                        Self::IdivToModRm16(mod_rm) => write!(f, "idiv {}", mod_rm),
+                        Self::NotToModRm(mod_rm) => write!(f, "not {}", mod_rm),
+                        Self::NegToModRm(mod_rm) => write!(f, "neg {}", mod_rm),
+                        Self::MulToModRm(mod_rm) => write!(f, "mul {}", mod_rm),
+                        Self::ImulToModRm(mod_rm) => write!(f, "imul {}", mod_rm),
+                        Self::DivToModRm(mod_rm) => write!(f, "div {}", mod_rm),
+                        Self::IdivToModRm(mod_rm) => write!(f, "idiv {}", mod_rm),
 
                         Self::Clc => write!(f, "clc"),
                         Self::Stc => write!(f, "stc"),

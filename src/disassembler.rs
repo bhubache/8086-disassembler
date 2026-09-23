@@ -1,44 +1,80 @@
 use std::fs;
 
+use crate::immediate::ImmedGroupImmediate16;
+use crate::immediate_parsing::ByteReader;
+use crate::immediate_parsing::ParseImmediate;
 use crate::instruction::Instruction;
 use crate::instruction::Opcode;
+use crate::instruction::Operation;
 use crate::instruction::RepeatableStringInstruction;
+use crate::mode::InvalidModeEncoding;
 use crate::mode::Mode;
+use crate::op_8;
+use crate::op_16;
 use crate::operand::Immediate;
 use crate::operand::MemoryIndex;
-use crate::operand::ModRm8;
-use crate::operand::ModRm16;
-use crate::operand::SizedModRm;
+use crate::operand::ModRm;
 use crate::parse_mod_reg_rm_8_from_reg;
 use crate::parse_mod_reg_rm_8_to_reg;
 use crate::parse_mod_reg_rm_16_from_reg;
 use crate::parse_mod_reg_rm_16_to_reg;
+use crate::prefixes::Prefixes;
 use crate::register::GeneralRegister8;
 use crate::register::GeneralRegister16;
+use crate::register::InvalidRegEncoding;
+use crate::register::RegCode;
 use crate::register::SegmentRegister;
-use crate::register::SizedRegister;
-use crate::rm::RM;
+use crate::rm::InvalidRmEncoding;
+use crate::rm::RmCode;
+use crate::width::OpWidth;
+use crate::width::Width8;
+use crate::width::Width16;
 
 #[derive(Debug)]
 pub enum DisassemblerError {
-    InvalidMode(u8),
-    InvalidRM(u8),
+    InvalidMode(InvalidModeEncoding),
+    InvalidRm(InvalidRmEncoding),
+    InvalidReg(InvalidRegEncoding),
     InvalidOpcodeExtension(u8),
     InvalidRepOperand(u8),
+    EOF,
 }
 
 impl std::fmt::Display for DisassemblerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidMode(mode) => write!(f, "invalid mode `{:02b}`", mode),
-            Self::InvalidRM(rm) => write!(f, "invalid rm `{:03b}`", rm),
+            Self::InvalidMode(error) => write!(f, "{}", error),
+            Self::InvalidRm(error) => write!(f, "{}", error),
+            Self::InvalidReg(error) => write!(f, "{}", error),
             Self::InvalidOpcodeExtension(value) => {
                 write!(f, "invalid opcode extension `{:03b}`", value)
             }
             Self::InvalidRepOperand(value) => write!(f, "invalid rep operand `{:02X}`", value),
+            Self::EOF => write!(f, "unexpectedly reached EOF"),
         }
     }
 }
+
+impl From<InvalidModeEncoding> for DisassemblerError {
+    fn from(value: InvalidModeEncoding) -> Self {
+        Self::InvalidMode(value)
+    }
+}
+
+impl From<InvalidRmEncoding> for DisassemblerError {
+    fn from(value: InvalidRmEncoding) -> Self {
+        Self::InvalidRm(value)
+    }
+}
+
+impl From<InvalidRegEncoding> for DisassemblerError {
+    fn from(value: InvalidRegEncoding) -> Self {
+        Self::InvalidReg(value)
+    }
+}
+
+// TODO: Impl methods
+impl std::error::Error for DisassemblerError {}
 
 pub struct Disassembler {
     bytes: Vec<u8>,
@@ -61,404 +97,41 @@ impl Disassembler {
         }
     }
 
+    pub fn dump_operations(&self) -> String {
+        self.instructions
+            .iter()
+            .map(|inst| inst.operation.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     pub fn dump(&self) -> String {
         self.instructions
             .iter()
-            .map(|inst| inst.opcode.to_string())
+            .map(|inst| inst.to_string())
             .collect::<Vec<_>>()
             .join("\n")
     }
 
     pub fn disassemble(&mut self) -> Result<(), DisassemblerError> {
-        let mut sr_override = None;
         while self.index < self.bytes.len() {
-            let (opcode_index, opcode) = (self.index, self.bytes[self.index]);
-            self.index += 1;
+            let address = self.index;
+            let mut prefixes = Prefixes::new();
+            let opcode_byte = self.read_byte()?;
 
-            let mnemonic = match opcode {
-                0x00 => parse_mod_reg_rm_8_from_reg!(self, Opcode::AddFromReg8, sr_override),
-                0x01 => parse_mod_reg_rm_16_from_reg!(self, Opcode::AddFromReg16, sr_override),
-                0x02 => parse_mod_reg_rm_8_to_reg!(self, Opcode::AddToReg8, sr_override),
-                0x03 => parse_mod_reg_rm_16_to_reg!(self, Opcode::AddToReg16, sr_override),
-                0x04 => Opcode::AddToALFromImmed8(self.parse_byte()),
-                0x05 => Opcode::AddToAXFromImmed16(self.parse_word()),
-                0x06 => Opcode::PushSR(SegmentRegister::ES),
-                0x07 => Opcode::PopSR(SegmentRegister::ES),
-                0x08 => parse_mod_reg_rm_8_from_reg!(self, Opcode::OrFromReg8, sr_override),
-                0x09 => parse_mod_reg_rm_16_from_reg!(self, Opcode::OrFromReg16, sr_override),
-                0x0A => parse_mod_reg_rm_8_to_reg!(self, Opcode::OrToReg8, sr_override),
-                0x0B => parse_mod_reg_rm_16_to_reg!(self, Opcode::OrToReg16, sr_override),
-                0x0C => Opcode::OrToALFromImmed8(self.parse_byte()),
-                0x0D => Opcode::OrToAXFromImmed16(self.parse_word()),
-                0x0E => Opcode::PushSR(SegmentRegister::CS),
-                0x0F => todo!(),
-                0x10 => parse_mod_reg_rm_8_from_reg!(self, Opcode::AdcFromReg8, sr_override),
-                0x11 => parse_mod_reg_rm_16_from_reg!(self, Opcode::AdcFromReg16, sr_override),
-                0x12 => parse_mod_reg_rm_8_to_reg!(self, Opcode::AdcToReg8, sr_override),
-                0x13 => parse_mod_reg_rm_16_to_reg!(self, Opcode::AdcToReg16, sr_override),
-                0x14 => Opcode::AdcToALFromImmed8(self.parse_byte()),
-                0x15 => Opcode::AdcToAXFromImmed16(self.parse_word()),
-                0x16 => Opcode::PushSR(SegmentRegister::SS),
-                0x17 => Opcode::PopSR(SegmentRegister::SS),
-                0x18 => parse_mod_reg_rm_8_from_reg!(self, Opcode::SbbFromReg8, sr_override),
-                0x19 => parse_mod_reg_rm_16_from_reg!(self, Opcode::SbbFromReg16, sr_override),
-                0x1A => parse_mod_reg_rm_8_to_reg!(self, Opcode::SbbToReg8, sr_override),
-                0x1B => parse_mod_reg_rm_16_to_reg!(self, Opcode::SbbToReg16, sr_override),
-                0x1C => Opcode::SbbToALFromImmed8(self.parse_byte()),
-                0x1D => Opcode::SbbToAXFromImmed16(self.parse_word()),
-                0x1E => Opcode::PushSR(SegmentRegister::DS),
-                0x1F => Opcode::PopSR(SegmentRegister::DS),
-                0x20 => parse_mod_reg_rm_8_from_reg!(self, Opcode::AndFromReg8, sr_override),
-                0x21 => parse_mod_reg_rm_16_from_reg!(self, Opcode::AndFromReg16, sr_override),
-                0x22 => parse_mod_reg_rm_8_to_reg!(self, Opcode::AndToReg8, sr_override),
-                0x23 => parse_mod_reg_rm_16_to_reg!(self, Opcode::AndToReg16, sr_override),
-                0x24 => Opcode::AndToALFromImmed8(self.parse_byte()),
-                0x25 => Opcode::AndToAXFromImmed16(self.parse_word()),
-                0x26 => Opcode::SROverride(SegmentRegister::ES),
-                0x27 => Opcode::Daa,
-                0x28 => parse_mod_reg_rm_8_from_reg!(self, Opcode::SubFromReg8, sr_override),
-                0x29 => parse_mod_reg_rm_16_from_reg!(self, Opcode::SubFromReg16, sr_override),
-                0x2A => parse_mod_reg_rm_8_to_reg!(self, Opcode::SubToReg8, sr_override),
-                0x2B => parse_mod_reg_rm_16_to_reg!(self, Opcode::SubToReg16, sr_override),
-                0x2C => Opcode::SubToALFromImmed8(self.parse_byte()),
-                0x2D => Opcode::SubToAXFromImmed16(self.parse_word()),
-                0x2E => Opcode::SROverride(SegmentRegister::CS),
-                0x2F => Opcode::Das,
-                0x30 => parse_mod_reg_rm_8_from_reg!(self, Opcode::XorFromReg8, sr_override),
-                0x31 => parse_mod_reg_rm_16_from_reg!(self, Opcode::XorFromReg16, sr_override),
-                0x32 => parse_mod_reg_rm_8_to_reg!(self, Opcode::XorToReg8, sr_override),
-                0x33 => parse_mod_reg_rm_16_to_reg!(self, Opcode::XorToReg16, sr_override),
-                0x34 => Opcode::XorToALFromImmed8(self.parse_byte()),
-                0x35 => Opcode::XorToAXFromImmed16(self.parse_word()),
-                0x36 => Opcode::SROverride(SegmentRegister::SS),
-                0x37 => Opcode::Aaa,
-                0x38 => parse_mod_reg_rm_8_from_reg!(self, Opcode::CmpFromReg8, sr_override),
-                0x39 => parse_mod_reg_rm_16_from_reg!(self, Opcode::CmpFromReg16, sr_override),
-                0x3A => parse_mod_reg_rm_8_to_reg!(self, Opcode::CmpToReg8, sr_override),
-                0x3B => parse_mod_reg_rm_16_to_reg!(self, Opcode::CmpToReg16, sr_override),
-                0x3C => Opcode::CmpToALFromImmed8(self.parse_byte()),
-                0x3D => Opcode::CmpToAXFromImmed16(self.parse_word()),
-                0x3E => Opcode::SROverride(SegmentRegister::DS),
-                0x3F => Opcode::Aas,
-                0x40 => Opcode::IncGR16(GeneralRegister16::AX),
-                0x41 => Opcode::IncGR16(GeneralRegister16::CX),
-                0x42 => Opcode::IncGR16(GeneralRegister16::DX),
-                0x43 => Opcode::IncGR16(GeneralRegister16::BX),
-                0x44 => Opcode::IncGR16(GeneralRegister16::SP),
-                0x45 => Opcode::IncGR16(GeneralRegister16::BP),
-                0x46 => Opcode::IncGR16(GeneralRegister16::SI),
-                0x47 => Opcode::IncGR16(GeneralRegister16::DI),
-                0x48 => Opcode::DecGR16(GeneralRegister16::AX),
-                0x49 => Opcode::DecGR16(GeneralRegister16::CX),
-                0x4A => Opcode::DecGR16(GeneralRegister16::DX),
-                0x4B => Opcode::DecGR16(GeneralRegister16::BX),
-                0x4C => Opcode::DecGR16(GeneralRegister16::SP),
-                0x4D => Opcode::DecGR16(GeneralRegister16::BP),
-                0x4E => Opcode::DecGR16(GeneralRegister16::SI),
-                0x4F => Opcode::DecGR16(GeneralRegister16::DI),
-                0x50 => Opcode::PushGR16(GeneralRegister16::AX),
-                0x51 => Opcode::PushGR16(GeneralRegister16::CX),
-                0x52 => Opcode::PushGR16(GeneralRegister16::DX),
-                0x53 => Opcode::PushGR16(GeneralRegister16::BX),
-                0x54 => Opcode::PushGR16(GeneralRegister16::SP),
-                0x55 => Opcode::PushGR16(GeneralRegister16::BP),
-                0x56 => Opcode::PushGR16(GeneralRegister16::SI),
-                0x57 => Opcode::PushGR16(GeneralRegister16::DI),
-                0x58 => Opcode::PopGR16(GeneralRegister16::AX),
-                0x59 => Opcode::PopGR16(GeneralRegister16::CX),
-                0x5A => Opcode::PopGR16(GeneralRegister16::DX),
-                0x5B => Opcode::PopGR16(GeneralRegister16::BX),
-                0x5C => Opcode::PopGR16(GeneralRegister16::SP),
-                0x5D => Opcode::PopGR16(GeneralRegister16::BP),
-                0x5E => Opcode::PopGR16(GeneralRegister16::SI),
-                0x5F => Opcode::PopGR16(GeneralRegister16::DI),
+            let maybe_operation = self.parse_operation(opcode_byte, &mut prefixes);
 
-                // 0x60 - 0x6F are documented as unused but there exist hardware generated tests
-                // for them
-                0x60 => Opcode::Jo(self.parse_short_label()),
-                0x61 => Opcode::Jno(self.parse_short_label()),
-                0x62 => Opcode::Jb(self.parse_short_label()),
-                0x63 => Opcode::Jnb(self.parse_short_label()),
-                0x64 => Opcode::Jz(self.parse_short_label()),
-                0x65 => Opcode::Jnz(self.parse_short_label()),
-                0x66 => Opcode::Jbe(self.parse_short_label()),
-                0x67 => Opcode::Jnbe(self.parse_short_label()),
-                0x68 => Opcode::Js(self.parse_short_label()),
-                0x69 => Opcode::Jns(self.parse_short_label()),
-                0x6A => Opcode::Jp(self.parse_short_label()),
-                0x6B => Opcode::Jnp(self.parse_short_label()),
-                0x6C => Opcode::Jl(self.parse_short_label()),
-                0x6D => Opcode::Jnl(self.parse_short_label()),
-                0x6E => Opcode::Jle(self.parse_short_label()),
-                0x6F => Opcode::Jnle(self.parse_short_label()),
+            match maybe_operation {
+                Ok(operation) => {
+                    let instruction = Instruction::new(address, operation);
 
-                0x70 => Opcode::Jo(self.parse_short_label()),
-                0x71 => Opcode::Jno(self.parse_short_label()),
-                0x72 => Opcode::Jb(self.parse_short_label()),
-                0x73 => Opcode::Jnb(self.parse_short_label()),
-                0x74 => Opcode::Jz(self.parse_short_label()),
-                0x75 => Opcode::Jnz(self.parse_short_label()),
-                0x76 => Opcode::Jbe(self.parse_short_label()),
-                0x77 => Opcode::Jnbe(self.parse_short_label()),
-                0x78 => Opcode::Js(self.parse_short_label()),
-                0x79 => Opcode::Jns(self.parse_short_label()),
-                0x7A => Opcode::Jp(self.parse_short_label()),
-                0x7B => Opcode::Jnp(self.parse_short_label()),
-                0x7C => Opcode::Jl(self.parse_short_label()),
-                0x7D => Opcode::Jnl(self.parse_short_label()),
-                0x7E => Opcode::Jle(self.parse_short_label()),
-                0x7F => Opcode::Jnle(self.parse_short_label()),
-                0x80 | 0x82 => {
-                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
-                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-                    let immed = self.parse_byte();
+                    self.instructions.push(instruction);
+                }
+                Err(err) => {
+                    // TODO: Add context
+                    println!("Encountered an error during disassembly: {err}");
 
-                    Self::create_modrm_with_reg_mnemonic_encoding_8(
-                        mnemonic_encoding,
-                        mod_rm,
-                        immed,
-                    )?
-                }
-                0x81 => {
-                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
-                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-                    let immed = self.parse_word();
-
-                    Self::create_modrm_with_reg_mnemonic_encoding_16(
-                        mnemonic_encoding,
-                        mod_rm,
-                        immed,
-                    )?
-                }
-                0x83 => {
-                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
-                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-                    let immed = self.parse_byte();
-
-                    Self::create_modrm_with_reg_mnemonic_encoding_8_sx(
-                        mnemonic_encoding,
-                        mod_rm,
-                        immed,
-                    )?
-                }
-                0x84 => parse_mod_reg_rm_8_from_reg!(self, Opcode::TestFromReg8, sr_override),
-                0x85 => parse_mod_reg_rm_16_from_reg!(self, Opcode::TestFromReg16, sr_override),
-                0x86 => parse_mod_reg_rm_8_to_reg!(self, Opcode::XchgToReg8, sr_override),
-                0x87 => parse_mod_reg_rm_16_to_reg!(self, Opcode::XchgToReg16, sr_override),
-                0x88 => parse_mod_reg_rm_8_from_reg!(self, Opcode::MovFromReg8, sr_override),
-                0x89 => parse_mod_reg_rm_16_from_reg!(self, Opcode::MovFromReg16, sr_override),
-                0x8A => parse_mod_reg_rm_8_to_reg!(self, Opcode::MovToReg8, sr_override),
-                0x8B => parse_mod_reg_rm_16_to_reg!(self, Opcode::MovToReg16, sr_override),
-                0x8C => {
-                    let (mod_rm, sr) = self.parse_mod_sr_rm(sr_override)?;
-                    Opcode::MovFromSR(mod_rm, sr)
-                }
-                0x8D => {
-                    let (fst, snd) = self.parse_mod_rm_as_mem_index(sr_override)?;
-                    Opcode::LeaToGR16(fst, snd)
-                }
-                0x8E => {
-                    let (mod_rm, sr) = self.parse_mod_sr_rm(sr_override)?;
-                    Opcode::MovToSR(sr, mod_rm)
-                }
-                0x8F => {
-                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-
-                    Opcode::PopModRm(mod_rm)
-                }
-                0x90 => Opcode::Nop,
-                0x91 => Opcode::XchgToAXFromCX,
-                0x92 => Opcode::XchgToAXFromDX,
-                0x93 => Opcode::XchgToAXFromBX,
-                0x94 => Opcode::XchgToAXFromSP,
-                0x95 => Opcode::XchgToAXFromBP,
-                0x96 => Opcode::XchgToAXFromSI,
-                0x97 => Opcode::XchgToAXFromDI,
-                0x98 => Opcode::Cbw,
-                0x99 => Opcode::Cwd,
-                0x9A => {
-                    let displacement = self.parse_word();
-                    let segment = self.parse_word();
-                    Opcode::CallFarProc(format!("{:04X}h:{:04X}h", segment, displacement))
-                }
-                0x9B => Opcode::Wait,
-                0x9C => Opcode::PushF,
-                0x9D => Opcode::PopF,
-                0x9E => Opcode::SahF,
-                0x9F => Opcode::LahF,
-                0xA0 => Opcode::MovToALFromMem8(MemoryIndex::with_immediate(
-                    Immediate::Word(self.parse_word()),
-                    sr_override,
-                )),
-                0xA1 => Opcode::MovToAXFromMem16(MemoryIndex::with_immediate(
-                    Immediate::Word(self.parse_word()),
-                    sr_override,
-                )),
-                0xA2 => Opcode::MovToMem8FromAL(MemoryIndex::with_immediate(
-                    Immediate::Word(self.parse_word()),
-                    sr_override,
-                )),
-                0xA3 => Opcode::MovToMem16FromAL(MemoryIndex::with_immediate(
-                    Immediate::Word(self.parse_word()),
-                    sr_override,
-                )),
-                0xA4 => Opcode::MovS8(sr_override),
-                0xA5 => Opcode::MovS16(sr_override),
-                0xA6 => Opcode::CmpS8(sr_override),
-                0xA7 => Opcode::CmpS16(sr_override),
-                0xA8 => Opcode::TestToALFromImmed8(self.parse_byte()),
-                0xA9 => Opcode::TestToAXFromImmed16(self.parse_word()),
-                0xAA => Opcode::StoS8(sr_override),
-                0xAB => Opcode::StoS16(sr_override),
-                0xAC => Opcode::LodS8(sr_override),
-                0xAD => Opcode::LodS16(sr_override),
-                0xAE => Opcode::ScaS8(sr_override),
-                0xAF => Opcode::ScaS16(sr_override),
-                0xB0 => Opcode::MovToGR8FromImmed8(GeneralRegister8::AL, self.parse_byte()),
-                0xB1 => Opcode::MovToGR8FromImmed8(GeneralRegister8::CL, self.parse_byte()),
-                0xB2 => Opcode::MovToGR8FromImmed8(GeneralRegister8::DL, self.parse_byte()),
-                0xB3 => Opcode::MovToGR8FromImmed8(GeneralRegister8::BL, self.parse_byte()),
-                0xB4 => Opcode::MovToGR8FromImmed8(GeneralRegister8::AH, self.parse_byte()),
-                0xB5 => Opcode::MovToGR8FromImmed8(GeneralRegister8::CH, self.parse_byte()),
-                0xB6 => Opcode::MovToGR8FromImmed8(GeneralRegister8::DH, self.parse_byte()),
-                0xB7 => Opcode::MovToGR8FromImmed8(GeneralRegister8::BH, self.parse_byte()),
-                0xB8 => Opcode::MovToGR16FromImmed16(GeneralRegister16::AX, self.parse_word()),
-                0xB9 => Opcode::MovToGR16FromImmed16(GeneralRegister16::CX, self.parse_word()),
-                0xBA => Opcode::MovToGR16FromImmed16(GeneralRegister16::DX, self.parse_word()),
-                0xBB => Opcode::MovToGR16FromImmed16(GeneralRegister16::BX, self.parse_word()),
-                0xBC => Opcode::MovToGR16FromImmed16(GeneralRegister16::SP, self.parse_word()),
-                0xBD => Opcode::MovToGR16FromImmed16(GeneralRegister16::BP, self.parse_word()),
-                0xBE => Opcode::MovToGR16FromImmed16(GeneralRegister16::SI, self.parse_word()),
-                0xBF => Opcode::MovToGR16FromImmed16(GeneralRegister16::DI, self.parse_word()),
-                0xC0 => Opcode::RetIntraSegImmed16(self.parse_word()),
-                0xC1 => Opcode::RetIntraSeg,
-                0xC2 => Opcode::RetIntraSegImmed16(self.parse_word()),
-                0xC3 => Opcode::RetIntraSeg,
-                0xC4 => {
-                    let (fst, snd) = self.parse_mod_rm_as_mem_index(sr_override)?;
-                    Opcode::LesToReg(fst, snd)
-                }
-                0xC5 => {
-                    let (fst, snd) = self.parse_mod_rm_as_mem_index(sr_override)?;
-                    Opcode::LdsToReg(fst, snd)
-                }
-                0xC6 => {
-                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-                    Opcode::MovToMem8FromImmed8(mod_rm, self.parse_byte())
-                }
-                0xC7 => {
-                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-                    Opcode::MovToMem16FromImmed16(mod_rm, self.parse_word())
-                }
-                0xC8 => Opcode::RetInterSegImmed16(self.parse_word()),
-                0xC9 => Opcode::RetInterSeg,
-                0xCA => Opcode::RetInterSegImmed16(self.parse_word()),
-                0xCB => Opcode::RetInterSeg,
-                0xCC => Opcode::Int3,
-                0xCD => Opcode::IntFromImmed8(self.parse_byte()),
-                0xCE => Opcode::Into,
-                0xCF => Opcode::Iret,
-                0xD0 => {
-                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
-                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-
-                    Self::create_modrm_with_reg_mnemonic_encoding_8_2(mnemonic_encoding, mod_rm)?
-                }
-                0xD1 => {
-                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
-                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-
-                    Self::create_modrm_with_reg_mnemonic_encoding_16_2(mnemonic_encoding, mod_rm)?
-                }
-                0xD2 => {
-                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
-                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-
-                    Self::create_modrm_with_reg_mnemonic_encoding_8_2_cl(mnemonic_encoding, mod_rm)?
-                }
-                0xD3 => {
-                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
-                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-
-                    Self::create_modrm_with_reg_mnemonic_encoding_16_2_cl(
-                        mnemonic_encoding,
-                        mod_rm,
-                    )?
-                }
-                0xD4 => Opcode::Aam(self.parse_byte()),
-                0xD5 => Opcode::Aad(self.parse_byte()),
-                0xD6 => Opcode::Salc,
-                0xD7 => Opcode::Xlat,
-                0xD8..=0xDF => {
-                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-                    Opcode::Esc(mod_rm)
-                }
-                0xE0 => Opcode::Loopne(self.parse_short_label()),
-                0xE1 => Opcode::Loope(self.parse_short_label()),
-                0xE2 => Opcode::Loop(self.parse_short_label()),
-                0xE3 => Opcode::Jcxz(self.parse_short_label()),
-                0xE4 => Opcode::InToALFromImmed8(self.parse_byte()),
-                0xE5 => Opcode::InToAXFromImmed8(self.parse_byte()),
-                0xE6 => Opcode::OutToPort8FromAL(self.parse_byte()),
-                0xE7 => Opcode::OutToPort8FromAX(self.parse_byte()),
-                0xE8 => Opcode::CallNearProc(format!("{:04X}h", self.parse_jump_word())),
-                0xE9 => Opcode::JmpNearLabel(format!("{:04X}h", self.parse_jump_word())),
-                0xEA => {
-                    let displacement = self.parse_word();
-                    let segment = self.parse_word();
-                    Opcode::JmpFarLabel(format!("{:04X}h:{:04X}h", segment, displacement))
-                }
-                0xEB => Opcode::JmpShortLabel(self.parse_short_label()),
-                0xEC => Opcode::InToALFromDX,
-                0xED => Opcode::InToAXFromDX,
-                0xEE => Opcode::OutToDXFromAL,
-                0xEF => Opcode::OutToDXFromAX,
-                0xF0 => Opcode::Lock,
-                0xF1 => todo!(),
-                0xF2 => Opcode::Repne(sr_override, self.parse_rep_op()?),
-                0xF3 => Opcode::Rep(sr_override, self.parse_rep_op()?),
-                0xF4 => Opcode::Hlt,
-                0xF5 => Opcode::Cmc,
-                0xF6 => {
-                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
-                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-
-                    self.create_modrm_with_reg_mnemonic_encoding_8_3(mnemonic_encoding, mod_rm)?
-                }
-                0xF7 => {
-                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
-                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-
-                    self.create_modrm_with_reg_mnemonic_encoding_16_3(mnemonic_encoding, mod_rm)?
-                }
-                0xF8 => Opcode::Clc,
-                0xF9 => Opcode::Stc,
-                0xFA => Opcode::Cli,
-                0xFB => Opcode::Sti,
-                0xFC => Opcode::Cld,
-                0xFD => Opcode::Std,
-                0xFE => {
-                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
-                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-
-                    self.create_modrm_with_reg_mnemonic_encoding_8_4(mnemonic_encoding, mod_rm)?
-                }
-                0xFF => {
-                    let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
-                    let (mod_rm, _) = self.parse_mod_reg_rm(sr_override)?;
-
-                    self.create_modrm_with_reg_mnemonic_encoding_16_4(mnemonic_encoding, mod_rm)?
-                }
-            };
-
-            match mnemonic {
-                Opcode::SROverride(sr) => {
-                    sr_override = Some(sr);
-                }
-                _ => {
-                    sr_override = None;
-                    self.instructions
-                        .push(Instruction::new(opcode_index, mnemonic));
+                    return Err(err);
                 }
             }
         }
@@ -466,23 +139,505 @@ impl Disassembler {
         Ok(())
     }
 
+    fn parse_operation(
+        &mut self,
+        opcode_byte: u8,
+        prefixes: &mut Prefixes,
+    ) -> Result<Operation, DisassemblerError> {
+        let operation = match opcode_byte {
+            0x00 => parse_mod_reg_rm_8_from_reg!(self, Opcode::AddFromReg, prefixes),
+            0x01 => parse_mod_reg_rm_16_from_reg!(self, Opcode::AddFromReg, prefixes),
+            0x02 => parse_mod_reg_rm_8_to_reg!(self, Opcode::AddToReg, prefixes),
+            0x03 => parse_mod_reg_rm_16_to_reg!(self, Opcode::AddToReg, prefixes),
+            0x04 => op_8!(Opcode::AddToALFromImmed8(self.read_byte()?.into())),
+            0x05 => op_16!(Opcode::AddToAXFromImmed16(self.read_word()?.into())),
+            0x06 => op_16!(Opcode::PushSR(SegmentRegister::ES)),
+            0x07 => op_16!(Opcode::PopSR(SegmentRegister::ES)),
+            0x08 => parse_mod_reg_rm_8_from_reg!(self, Opcode::OrFromReg, prefixes),
+            0x09 => parse_mod_reg_rm_16_from_reg!(self, Opcode::OrFromReg, prefixes),
+            0x0A => parse_mod_reg_rm_8_to_reg!(self, Opcode::OrToReg, prefixes),
+            0x0B => parse_mod_reg_rm_16_to_reg!(self, Opcode::OrToReg, prefixes),
+            0x0C => op_8!(Opcode::OrToALFromImmed8(self.read_byte()?.into())),
+            0x0D => op_16!(Opcode::OrToAXFromImmed16(self.read_word()?.into())),
+            0x0E => op_16!(Opcode::PushSR(SegmentRegister::CS)),
+            0x0F => todo!(),
+            0x10 => parse_mod_reg_rm_8_from_reg!(self, Opcode::AdcFromReg, prefixes),
+            0x11 => parse_mod_reg_rm_16_from_reg!(self, Opcode::AdcFromReg, prefixes),
+            0x12 => parse_mod_reg_rm_8_to_reg!(self, Opcode::AdcToReg, prefixes),
+            0x13 => parse_mod_reg_rm_16_to_reg!(self, Opcode::AdcToReg, prefixes),
+            0x14 => op_8!(Opcode::AdcToALFromImmed8(self.read_byte()?.into())),
+            0x15 => op_16!(Opcode::AdcToAXFromImmed16(self.read_word()?.into())),
+            0x16 => op_16!(Opcode::PushSR(SegmentRegister::SS)),
+            0x17 => op_16!(Opcode::PopSR(SegmentRegister::SS)),
+            0x18 => parse_mod_reg_rm_8_from_reg!(self, Opcode::SbbFromReg, prefixes),
+            0x19 => parse_mod_reg_rm_16_from_reg!(self, Opcode::SbbFromReg, prefixes),
+            0x1A => parse_mod_reg_rm_8_to_reg!(self, Opcode::SbbToReg, prefixes),
+            0x1B => parse_mod_reg_rm_16_to_reg!(self, Opcode::SbbToReg, prefixes),
+            0x1C => op_8!(Opcode::SbbToALFromImmed8(self.read_byte()?.into())),
+            0x1D => op_16!(Opcode::SbbToAXFromImmed16(self.read_word()?.into())),
+            0x1E => op_16!(Opcode::PushSR(SegmentRegister::DS)),
+            0x1F => op_16!(Opcode::PopSR(SegmentRegister::DS)),
+            0x20 => parse_mod_reg_rm_8_from_reg!(self, Opcode::AndFromReg, prefixes),
+            0x21 => parse_mod_reg_rm_16_from_reg!(self, Opcode::AndFromReg, prefixes),
+            0x22 => parse_mod_reg_rm_8_to_reg!(self, Opcode::AndToReg, prefixes),
+            0x23 => parse_mod_reg_rm_16_to_reg!(self, Opcode::AndToReg, prefixes),
+            0x24 => op_8!(Opcode::AndToALFromImmed8(self.read_byte()?.into())),
+            0x25 => op_16!(Opcode::AndToAXFromImmed16(self.read_word()?.into())),
+            0x26 => {
+                prefixes.sr_override = Some(SegmentRegister::ES);
+                let byte = self.read_byte()?;
+                self.parse_operation(byte, prefixes)?
+            }
+            0x27 => op_8!(Opcode::Daa),
+            0x28 => parse_mod_reg_rm_8_from_reg!(self, Opcode::SubFromReg, prefixes),
+            0x29 => parse_mod_reg_rm_16_from_reg!(self, Opcode::SubFromReg, prefixes),
+            0x2A => parse_mod_reg_rm_8_to_reg!(self, Opcode::SubToReg, prefixes),
+            0x2B => parse_mod_reg_rm_16_to_reg!(self, Opcode::SubToReg, prefixes),
+            0x2C => op_8!(Opcode::SubToALFromImmed8(self.read_byte()?.into())),
+            0x2D => op_16!(Opcode::SubToAXFromImmed16(self.read_word()?.into())),
+            0x2E => {
+                prefixes.sr_override = Some(SegmentRegister::CS);
+                let byte = self.read_byte()?;
+                self.parse_operation(byte, prefixes)?
+            }
+            0x2F => op_8!(Opcode::Das),
+            0x30 => parse_mod_reg_rm_8_from_reg!(self, Opcode::XorFromReg, prefixes),
+            0x31 => parse_mod_reg_rm_16_from_reg!(self, Opcode::XorFromReg, prefixes),
+            0x32 => parse_mod_reg_rm_8_to_reg!(self, Opcode::XorToReg, prefixes),
+            0x33 => parse_mod_reg_rm_16_to_reg!(self, Opcode::XorToReg, prefixes),
+            0x34 => op_8!(Opcode::XorToALFromImmed8(self.read_byte()?.into())),
+            0x35 => op_16!(Opcode::XorToAXFromImmed16(self.read_word()?.into())),
+            0x36 => {
+                prefixes.sr_override = Some(SegmentRegister::SS);
+                let byte = self.read_byte()?;
+                self.parse_operation(byte, prefixes)?
+            }
+            0x37 => op_16!(Opcode::Aaa),
+            0x38 => parse_mod_reg_rm_8_from_reg!(self, Opcode::CmpFromReg, prefixes),
+            0x39 => parse_mod_reg_rm_16_from_reg!(self, Opcode::CmpFromReg, prefixes),
+            0x3A => parse_mod_reg_rm_8_to_reg!(self, Opcode::CmpToReg, prefixes),
+            0x3B => parse_mod_reg_rm_16_to_reg!(self, Opcode::CmpToReg, prefixes),
+            0x3C => op_8!(Opcode::CmpToALFromImmed8(self.read_byte()?.into())),
+            0x3D => op_16!(Opcode::CmpToAXFromImmed16(self.read_word()?.into())),
+            0x3E => {
+                prefixes.sr_override = Some(SegmentRegister::DS);
+                let byte = self.read_byte()?;
+                self.parse_operation(byte, prefixes)?
+            }
+            0x3F => op_16!(Opcode::Aas),
+            0x40 => op_16!(Opcode::IncGR16(GeneralRegister16::AX)),
+            0x41 => op_16!(Opcode::IncGR16(GeneralRegister16::CX)),
+            0x42 => op_16!(Opcode::IncGR16(GeneralRegister16::DX)),
+            0x43 => op_16!(Opcode::IncGR16(GeneralRegister16::BX)),
+            0x44 => op_16!(Opcode::IncGR16(GeneralRegister16::SP)),
+            0x45 => op_16!(Opcode::IncGR16(GeneralRegister16::BP)),
+            0x46 => op_16!(Opcode::IncGR16(GeneralRegister16::SI)),
+            0x47 => op_16!(Opcode::IncGR16(GeneralRegister16::DI)),
+            0x48 => op_16!(Opcode::DecGR16(GeneralRegister16::AX)),
+            0x49 => op_16!(Opcode::DecGR16(GeneralRegister16::CX)),
+            0x4A => op_16!(Opcode::DecGR16(GeneralRegister16::DX)),
+            0x4B => op_16!(Opcode::DecGR16(GeneralRegister16::BX)),
+            0x4C => op_16!(Opcode::DecGR16(GeneralRegister16::SP)),
+            0x4D => op_16!(Opcode::DecGR16(GeneralRegister16::BP)),
+            0x4E => op_16!(Opcode::DecGR16(GeneralRegister16::SI)),
+            0x4F => op_16!(Opcode::DecGR16(GeneralRegister16::DI)),
+            0x50 => op_16!(Opcode::PushGR16(GeneralRegister16::AX)),
+            0x51 => op_16!(Opcode::PushGR16(GeneralRegister16::CX)),
+            0x52 => op_16!(Opcode::PushGR16(GeneralRegister16::DX)),
+            0x53 => op_16!(Opcode::PushGR16(GeneralRegister16::BX)),
+            0x54 => op_16!(Opcode::PushGR16(GeneralRegister16::SP)),
+            0x55 => op_16!(Opcode::PushGR16(GeneralRegister16::BP)),
+            0x56 => op_16!(Opcode::PushGR16(GeneralRegister16::SI)),
+            0x57 => op_16!(Opcode::PushGR16(GeneralRegister16::DI)),
+            0x58 => op_16!(Opcode::PopGR16(GeneralRegister16::AX)),
+            0x59 => op_16!(Opcode::PopGR16(GeneralRegister16::CX)),
+            0x5A => op_16!(Opcode::PopGR16(GeneralRegister16::DX)),
+            0x5B => op_16!(Opcode::PopGR16(GeneralRegister16::BX)),
+            0x5C => op_16!(Opcode::PopGR16(GeneralRegister16::SP)),
+            0x5D => op_16!(Opcode::PopGR16(GeneralRegister16::BP)),
+            0x5E => op_16!(Opcode::PopGR16(GeneralRegister16::SI)),
+            0x5F => op_16!(Opcode::PopGR16(GeneralRegister16::DI)),
+
+            // 0x60 - 0x6F are documented as unused but there exist hardware generated tests
+            // for them
+            0x60 => op_16!(Opcode::Jo(self.parse_short_label()?)),
+            0x61 => op_16!(Opcode::Jno(self.parse_short_label()?)),
+            0x62 => op_16!(Opcode::Jb(self.parse_short_label()?)),
+            0x63 => op_16!(Opcode::Jnb(self.parse_short_label()?)),
+            0x64 => op_16!(Opcode::Jz(self.parse_short_label()?)),
+            0x65 => op_16!(Opcode::Jnz(self.parse_short_label()?)),
+            0x66 => op_16!(Opcode::Jbe(self.parse_short_label()?)),
+            0x67 => op_16!(Opcode::Jnbe(self.parse_short_label()?)),
+            0x68 => op_16!(Opcode::Js(self.parse_short_label()?)),
+            0x69 => op_16!(Opcode::Jns(self.parse_short_label()?)),
+            0x6A => op_16!(Opcode::Jp(self.parse_short_label()?)),
+            0x6B => op_16!(Opcode::Jnp(self.parse_short_label()?)),
+            0x6C => op_16!(Opcode::Jl(self.parse_short_label()?)),
+            0x6D => op_16!(Opcode::Jnl(self.parse_short_label()?)),
+            0x6E => op_16!(Opcode::Jle(self.parse_short_label()?)),
+            0x6F => op_16!(Opcode::Jnle(self.parse_short_label()?)),
+
+            0x70 => op_16!(Opcode::Jo(self.parse_short_label()?)),
+            0x71 => op_16!(Opcode::Jno(self.parse_short_label()?)),
+            0x72 => op_16!(Opcode::Jb(self.parse_short_label()?)),
+            0x73 => op_16!(Opcode::Jnb(self.parse_short_label()?)),
+            0x74 => op_16!(Opcode::Jz(self.parse_short_label()?)),
+            0x75 => op_16!(Opcode::Jnz(self.parse_short_label()?)),
+            0x76 => op_16!(Opcode::Jbe(self.parse_short_label()?)),
+            0x77 => op_16!(Opcode::Jnbe(self.parse_short_label()?)),
+            0x78 => op_16!(Opcode::Js(self.parse_short_label()?)),
+            0x79 => op_16!(Opcode::Jns(self.parse_short_label()?)),
+            0x7A => op_16!(Opcode::Jp(self.parse_short_label()?)),
+            0x7B => op_16!(Opcode::Jnp(self.parse_short_label()?)),
+            0x7C => op_16!(Opcode::Jl(self.parse_short_label()?)),
+            0x7D => op_16!(Opcode::Jnl(self.parse_short_label()?)),
+            0x7E => op_16!(Opcode::Jle(self.parse_short_label()?)),
+            0x7F => op_16!(Opcode::Jnle(self.parse_short_label()?)),
+            0x80 | 0x82 => {
+                // TODO: Make Group<num>Code for each encoding to encapsulate the bit shifting?
+                let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                let (mod_rm, _) = self.parse_mod_reg_rm(prefixes)?;
+                let immed = self.read_byte()?.into();
+
+                op_8!(Self::create_modrm_with_reg_mnemonic_encoding_immed(
+                    mnemonic_encoding,
+                    mod_rm,
+                    immed,
+                )?)
+            }
+            0x81 => {
+                let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                let (mod_rm, _) = self.parse_mod_reg_rm(prefixes)?;
+                let immed = ImmedGroupImmediate16::Full(self.read_word()?.into());
+
+                op_16!(Self::create_modrm_with_reg_mnemonic_encoding_immed(
+                    mnemonic_encoding,
+                    mod_rm,
+                    immed,
+                )?)
+            }
+            0x83 => {
+                let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                let (mod_rm, _) = self.parse_mod_reg_rm(prefixes)?;
+                let immed = ImmedGroupImmediate16::SignExtended8(self.read_byte()?.into());
+
+                op_16!(Self::create_modrm_with_reg_mnemonic_encoding_immed(
+                    mnemonic_encoding,
+                    mod_rm,
+                    immed,
+                )?)
+            }
+            0x84 => parse_mod_reg_rm_8_from_reg!(self, Opcode::TestFromReg, prefixes),
+            0x85 => parse_mod_reg_rm_16_from_reg!(self, Opcode::TestFromReg, prefixes),
+            0x86 => parse_mod_reg_rm_8_to_reg!(self, Opcode::XchgToReg, prefixes),
+            0x87 => parse_mod_reg_rm_16_to_reg!(self, Opcode::XchgToReg, prefixes),
+            0x88 => parse_mod_reg_rm_8_from_reg!(self, Opcode::MovFromReg, prefixes),
+            0x89 => parse_mod_reg_rm_16_from_reg!(self, Opcode::MovFromReg, prefixes),
+            0x8A => parse_mod_reg_rm_8_to_reg!(self, Opcode::MovToReg, prefixes),
+            0x8B => parse_mod_reg_rm_16_to_reg!(self, Opcode::MovToReg, prefixes),
+            0x8C => {
+                let (mod_rm, sr) = self.parse_mod_sr_rm(prefixes)?;
+                op_16!(Opcode::MovFromSR(mod_rm, sr))
+            }
+            0x8D => {
+                let (fst, snd) = self.parse_mod_rm_as_mem_index(prefixes)?;
+                op_16!(Opcode::LeaToGR16(fst, snd))
+            }
+            0x8E => {
+                let (mod_rm, sr) = self.parse_mod_sr_rm(prefixes)?;
+                op_16!(Opcode::MovToSR(sr, mod_rm))
+            }
+            0x8F => {
+                let (mod_rm, _) = self.parse_mod_reg_rm(prefixes)?;
+
+                op_16!(Opcode::PopModRm(mod_rm))
+            }
+            0x90 => op_8!(Opcode::Nop),
+            0x91 => op_8!(Opcode::XchgToAXFromCX),
+            0x92 => op_8!(Opcode::XchgToAXFromDX),
+            0x93 => op_8!(Opcode::XchgToAXFromBX),
+            0x94 => op_8!(Opcode::XchgToAXFromSP),
+            0x95 => op_8!(Opcode::XchgToAXFromBP),
+            0x96 => op_8!(Opcode::XchgToAXFromSI),
+            0x97 => op_8!(Opcode::XchgToAXFromDI),
+            0x98 => op_8!(Opcode::Cbw),
+            0x99 => op_8!(Opcode::Cwd),
+            0x9A => {
+                let displacement = self.read_word()?;
+                let segment = self.read_word()?;
+                op_16!(Opcode::CallFarProc(format!(
+                    "{:04X}h:{:04X}h",
+                    segment, displacement
+                )))
+            }
+            0x9B => op_8!(Opcode::Wait),
+            0x9C => op_8!(Opcode::PushF),
+            0x9D => op_8!(Opcode::PopF),
+            0x9E => op_8!(Opcode::SahF),
+            0x9F => op_8!(Opcode::LahF),
+
+            // TODO: These should use the new immediate types
+            0xA0 => op_16!(Opcode::MovToALFromMem8(MemoryIndex::with_immediate(
+                Immediate::Word(self.read_word()?),
+                prefixes,
+            ))),
+            0xA1 => op_8!(Opcode::MovToAXFromMem16(MemoryIndex::with_immediate(
+                Immediate::Word(self.read_word()?),
+                prefixes,
+            ))),
+            0xA2 => op_8!(Opcode::MovToMem8FromAL(MemoryIndex::with_immediate(
+                Immediate::Word(self.read_word()?),
+                prefixes,
+            ))),
+            0xA3 => op_8!(Opcode::MovToMem16FromAL(MemoryIndex::with_immediate(
+                Immediate::Word(self.read_word()?),
+                prefixes,
+            ))),
+            0xA4 => op_8!(Opcode::MovS8(prefixes.sr_override)),
+            0xA5 => op_16!(Opcode::MovS16(prefixes.sr_override)),
+            0xA6 => op_8!(Opcode::CmpS8(prefixes.sr_override)),
+            0xA7 => op_16!(Opcode::CmpS16(prefixes.sr_override)),
+            0xA8 => op_8!(Opcode::TestToALFromImmed8(self.read_byte()?.into())),
+            0xA9 => op_16!(Opcode::TestToAXFromImmed16(self.read_word()?.into())),
+            0xAA => op_8!(Opcode::StoS8(prefixes.sr_override)),
+            0xAB => op_16!(Opcode::StoS16(prefixes.sr_override)),
+            0xAC => op_8!(Opcode::LodS8(prefixes.sr_override)),
+            0xAD => op_16!(Opcode::LodS16(prefixes.sr_override)),
+            0xAE => op_8!(Opcode::ScaS8(prefixes.sr_override)),
+            0xAF => op_16!(Opcode::ScaS16(prefixes.sr_override)),
+            0xB0 => op_8!(Opcode::MovToGRFromImmed(
+                GeneralRegister8::AL,
+                self.read_byte()?.into()
+            )),
+            0xB1 => op_8!(Opcode::MovToGRFromImmed(
+                GeneralRegister8::CL,
+                self.read_byte()?.into()
+            )),
+            0xB2 => op_8!(Opcode::MovToGRFromImmed(
+                GeneralRegister8::DL,
+                self.read_byte()?.into()
+            )),
+            0xB3 => op_8!(Opcode::MovToGRFromImmed(
+                GeneralRegister8::BL,
+                self.read_byte()?.into()
+            )),
+            0xB4 => op_8!(Opcode::MovToGRFromImmed(
+                GeneralRegister8::AH,
+                self.read_byte()?.into()
+            )),
+            0xB5 => op_8!(Opcode::MovToGRFromImmed(
+                GeneralRegister8::CH,
+                self.read_byte()?.into()
+            )),
+            0xB6 => op_8!(Opcode::MovToGRFromImmed(
+                GeneralRegister8::DH,
+                self.read_byte()?.into()
+            )),
+            0xB7 => op_8!(Opcode::MovToGRFromImmed(
+                GeneralRegister8::BH,
+                self.read_byte()?.into()
+            )),
+            0xB8 => op_16!(Opcode::MovToGRFromImmed(
+                GeneralRegister16::AX,
+                self.read_word()?.into()
+            )),
+            0xB9 => op_16!(Opcode::MovToGRFromImmed(
+                GeneralRegister16::CX,
+                self.read_word()?.into()
+            )),
+            0xBA => op_16!(Opcode::MovToGRFromImmed(
+                GeneralRegister16::DX,
+                self.read_word()?.into()
+            )),
+            0xBB => op_16!(Opcode::MovToGRFromImmed(
+                GeneralRegister16::BX,
+                self.read_word()?.into()
+            )),
+            0xBC => op_16!(Opcode::MovToGRFromImmed(
+                GeneralRegister16::SP,
+                self.read_word()?.into()
+            )),
+            0xBD => op_16!(Opcode::MovToGRFromImmed(
+                GeneralRegister16::BP,
+                self.read_word()?.into()
+            )),
+            0xBE => op_16!(Opcode::MovToGRFromImmed(
+                GeneralRegister16::SI,
+                self.read_word()?.into()
+            )),
+            0xBF => op_16!(Opcode::MovToGRFromImmed(
+                GeneralRegister16::DI,
+                self.read_word()?.into()
+            )),
+            0xC0 => op_16!(Opcode::RetIntraSegImmed16(self.read_word()?.into())),
+            0xC1 => op_8!(Opcode::RetIntraSeg),
+            0xC2 => op_16!(Opcode::RetIntraSegImmed16(self.read_word()?.into())),
+            0xC3 => op_8!(Opcode::RetIntraSeg),
+            0xC4 => {
+                let (fst, snd) = self.parse_mod_rm_as_mem_index(prefixes)?;
+                op_8!(Opcode::LesToReg(fst, snd))
+            }
+            0xC5 => {
+                let (fst, snd) = self.parse_mod_rm_as_mem_index(prefixes)?;
+                op_8!(Opcode::LdsToReg(fst, snd))
+            }
+            0xC6 => {
+                let (mod_rm, _) = self.parse_mod_reg_rm(prefixes)?;
+                op_8!(Opcode::MovToMemFromImmed(mod_rm, self.read_byte()?.into()))
+            }
+            0xC7 => {
+                let (mod_rm, _) = self.parse_mod_reg_rm(prefixes)?;
+                op_16!(Opcode::MovToMemFromImmed(mod_rm, self.read_word()?.into()))
+            }
+            0xC8 => op_16!(Opcode::RetInterSegImmed16(self.read_word()?.into())),
+            0xC9 => op_8!(Opcode::RetInterSeg),
+            0xCA => op_16!(Opcode::RetInterSegImmed16(self.read_word()?.into())),
+            0xCB => op_8!(Opcode::RetInterSeg),
+            0xCC => op_8!(Opcode::Int3),
+            0xCD => op_8!(Opcode::IntFromImmed8(self.read_byte()?.into())),
+            0xCE => op_8!(Opcode::Into),
+            0xCF => op_8!(Opcode::Iret),
+            0xD0 => {
+                let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                let (mod_rm, _) = self.parse_mod_reg_rm(prefixes)?;
+
+                op_8!(Self::create_modrm_with_reg_mnemonic_encoding_shift(
+                    mnemonic_encoding,
+                    mod_rm
+                )?)
+            }
+            0xD1 => {
+                let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                let (mod_rm, _) = self.parse_mod_reg_rm(prefixes)?;
+
+                op_16!(Self::create_modrm_with_reg_mnemonic_encoding_shift(
+                    mnemonic_encoding,
+                    mod_rm
+                )?)
+            }
+            0xD2 => {
+                let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                let (mod_rm, _) = self.parse_mod_reg_rm(prefixes)?;
+
+                op_8!(Self::create_modrm_with_reg_mnemonic_encoding_shift_cl(
+                    mnemonic_encoding,
+                    mod_rm
+                )?)
+            }
+            0xD3 => {
+                let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                let (mod_rm, _) = self.parse_mod_reg_rm(prefixes)?;
+
+                op_16!(Self::create_modrm_with_reg_mnemonic_encoding_shift_cl(
+                    mnemonic_encoding,
+                    mod_rm
+                )?)
+            }
+            0xD4 => op_8!(Opcode::Aam(self.read_byte()?.into())),
+            0xD5 => op_8!(Opcode::Aad(self.read_byte()?.into())),
+            0xD6 => op_8!(Opcode::Salc),
+            0xD7 => op_8!(Opcode::Xlat),
+            0xD8..=0xDF => {
+                let (mod_rm, _) = self.parse_mod_reg_rm(prefixes)?;
+                op_8!(Opcode::Esc(mod_rm))
+            }
+            0xE0 => op_16!(Opcode::Loopne(self.parse_short_label()?)),
+            0xE1 => op_16!(Opcode::Loope(self.parse_short_label()?)),
+            0xE2 => op_16!(Opcode::Loop(self.parse_short_label()?)),
+            0xE3 => op_16!(Opcode::Jcxz(self.parse_short_label()?)),
+            0xE4 => op_8!(Opcode::InToALFromImmed8(self.read_byte()?.into())),
+            0xE5 => op_8!(Opcode::InToAXFromImmed8(self.read_byte()?.into())),
+            0xE6 => op_8!(Opcode::OutToPort8FromAL(self.read_byte()?.into())),
+            0xE7 => op_8!(Opcode::OutToPort8FromAX(self.read_byte()?.into())),
+            0xE8 => op_16!(Opcode::CallNearProc(format!(
+                "{:04X}h",
+                self.parse_jump_word()?
+            ))),
+            0xE9 => op_16!(Opcode::JmpNearLabel(format!(
+                "{:04X}h",
+                self.parse_jump_word()?
+            ))),
+            0xEA => {
+                let displacement = self.read_word()?;
+                let segment = self.read_word()?;
+                op_16!(Opcode::JmpFarLabel(format!(
+                    "{:04X}h:{:04X}h",
+                    segment, displacement
+                )))
+            }
+            0xEB => op_16!(Opcode::JmpShortLabel(self.parse_short_label()?)),
+            0xEC => op_8!(Opcode::InToALFromDX),
+            0xED => op_8!(Opcode::InToAXFromDX),
+            0xEE => op_8!(Opcode::OutToDXFromAL),
+            0xEF => op_8!(Opcode::OutToDXFromAX),
+            0xF0 => op_8!(Opcode::Lock),
+            0xF1 => todo!(),
+            0xF2 => op_8!(Opcode::Repne(prefixes.sr_override, self.parse_rep_op()?)),
+            0xF3 => op_8!(Opcode::Rep(prefixes.sr_override, self.parse_rep_op()?)),
+            0xF4 => op_8!(Opcode::Hlt),
+            0xF5 => op_8!(Opcode::Cmc),
+            0xF6 => {
+                let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                let (mod_rm, _) = self.parse_mod_reg_rm(prefixes)?;
+
+                op_8!(
+                    self.create_modrm_with_reg_mnemonic_encoding_group1(mnemonic_encoding, mod_rm)?
+                )
+            }
+            0xF7 => {
+                let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                let (mod_rm, _) = self.parse_mod_reg_rm(prefixes)?;
+
+                op_16!(
+                    self.create_modrm_with_reg_mnemonic_encoding_group1(mnemonic_encoding, mod_rm)?
+                )
+            }
+            0xF8 => op_8!(Opcode::Clc),
+            0xF9 => op_8!(Opcode::Stc),
+            0xFA => op_8!(Opcode::Cli),
+            0xFB => op_8!(Opcode::Sti),
+            0xFC => op_8!(Opcode::Cld),
+            0xFD => op_8!(Opcode::Std),
+            0xFE => {
+                let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                let (mod_rm, _) = self.parse_mod_reg_rm(prefixes)?;
+
+                op_8!(Self::create_modrm_with_reg_mnemonic_encoding_group2_8bit(
+                    mnemonic_encoding,
+                    mod_rm
+                )?)
+            }
+            0xFF => {
+                let mnemonic_encoding: u8 = (self.bytes[self.index] & 0b00111000) >> 3;
+                let (mod_rm, _) = self.parse_mod_reg_rm(prefixes)?;
+
+                op_16!(Self::create_modrm_with_reg_mnemonic_encoding_group2_16bit(
+                    mnemonic_encoding,
+                    mod_rm
+                )?)
+            }
+        };
+
+        Ok(operation)
+    }
+
     fn parse_mod_rm_as_mem_index(
         &mut self,
-        sr_override: Option<SegmentRegister>,
+        prefixes: &mut Prefixes,
     ) -> Result<(GeneralRegister16, MemoryIndex), DisassemblerError> {
-        let (mod_rm, dst_reg) = self.parse_mod_reg_rm(sr_override)?;
+        let (mod_rm, dst_reg) = self.parse_mod_reg_rm(prefixes)?;
         // FIXME: Is it appropriate to panic here?
         match mod_rm {
-            ModRm16::Register(reg) => panic!(
+            ModRm::<Width16>::Register(reg) => panic!(
                 "unexpectedly parsed MOD/RM as register `{}` rather than a memory index",
                 reg
             ),
-            ModRm16::EffectiveAddr(mem_index) => Ok((dst_reg, mem_index)),
+            ModRm::<Width16>::EffectiveAddr(mem_index) => Ok((dst_reg, mem_index)),
         }
     }
 
     fn parse_rep_op(&mut self) -> Result<RepeatableStringInstruction, DisassemblerError> {
-        let rsi = match self.parse_byte() {
+        let rsi = match self.read_byte()? {
             0xA4 => RepeatableStringInstruction::Movsb,
             0xA5 => RepeatableStringInstruction::Movsw,
             0xA6 => RepeatableStringInstruction::Cmpsb,
@@ -499,14 +654,13 @@ impl Disassembler {
         Ok(rsi)
     }
 
-    fn create_modrm_with_reg_mnemonic_encoding_8_4(
-        &mut self,
+    fn create_modrm_with_reg_mnemonic_encoding_group2_8bit(
         mnemonic_encoding: u8,
-        mod_rm: ModRm8,
-    ) -> Result<Opcode, DisassemblerError> {
-        let mnemonic = match mnemonic_encoding {
-            0b000 => Opcode::IncModRm8(mod_rm),
-            0b001 => Opcode::DecModRm8(mod_rm),
+        mod_rm: ModRm<Width8>,
+    ) -> Result<Opcode<Width8>, DisassemblerError> {
+        let opcode = match mnemonic_encoding {
+            0b000 => Opcode::IncModRm(mod_rm),
+            0b001 => Opcode::DecModRm(mod_rm),
             0b010 => todo!(),
             0b011 => todo!(),
             0b100 => todo!(),
@@ -516,271 +670,154 @@ impl Disassembler {
             _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
         };
 
-        Ok(mnemonic)
+        Ok(opcode)
     }
 
-    fn create_modrm_with_reg_mnemonic_encoding_16_4(
-        &mut self,
+    fn create_modrm_with_reg_mnemonic_encoding_group2_16bit(
         mnemonic_encoding: u8,
-        mod_rm: ModRm16,
-    ) -> Result<Opcode, DisassemblerError> {
-        let mnemonic = match mnemonic_encoding {
-            0b000 => Opcode::IncModRm16(mod_rm),
-            0b001 => Opcode::DecModRm16(mod_rm),
+        mod_rm: ModRm<Width16>,
+    ) -> Result<Opcode<Width16>, DisassemblerError> {
+        let opcode = match mnemonic_encoding {
+            0b000 => Opcode::IncModRm(mod_rm),
+            0b001 => Opcode::DecModRm(mod_rm),
             0b010 => Opcode::CallModRm16(mod_rm),
             0b011 => match mod_rm {
-                ModRm16::Register(_) => panic!("Uhoh!!"),
-                ModRm16::EffectiveAddr(mem_index) => Opcode::CallMem16(mem_index),
+                ModRm::Register(_) => panic!("Uhoh!!"),
+                ModRm::EffectiveAddr(mem_index) => Opcode::CallMem16(mem_index),
             },
             0b100 => Opcode::JmpModRm16(mod_rm),
             0b101 => match mod_rm {
-                ModRm16::Register(_) => panic!("Uhoh!!"),
-                ModRm16::EffectiveAddr(mem_index) => Opcode::JmpMem16(mem_index),
+                ModRm::Register(_) => panic!("Uhoh!!"),
+                ModRm::EffectiveAddr(mem_index) => Opcode::JmpMem16(mem_index),
             },
             0b110 => Opcode::PushModRm16(mod_rm),
             0b111 => Opcode::PushModRm16(mod_rm),
             _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
         };
 
-        Ok(mnemonic)
+        Ok(opcode)
     }
 
-    fn create_modrm_with_reg_mnemonic_encoding_8_3(
+    fn create_modrm_with_reg_mnemonic_encoding_group1<W: OpWidth>(
         &mut self,
         mnemonic_encoding: u8,
-        mod_rm: ModRm8,
-    ) -> Result<Opcode, DisassemblerError> {
+        mod_rm: ModRm<W>,
+    ) -> Result<Opcode<W>, DisassemblerError> {
         let mnemonic = match mnemonic_encoding {
-            0b000 => Opcode::TestToModRmFromImmed8(mod_rm, self.parse_byte()),
-            0b001 => Opcode::TestToModRmFromImmed8(mod_rm, self.parse_byte()),
-            0b010 => Opcode::NotToModRm8(mod_rm),
-            0b011 => Opcode::NegToModRm8(mod_rm),
-            0b100 => Opcode::MulToModRm8(mod_rm),
-            0b101 => Opcode::ImulToModRm8(mod_rm),
-            0b110 => Opcode::DivToModRm8(mod_rm),
-            0b111 => Opcode::IdivToModRm8(mod_rm),
+            0b000 => Opcode::TestToModRmFromImmed(mod_rm, W::Immediate::parse_immediate(self)?),
+            0b001 => Opcode::TestToModRmFromImmed(mod_rm, W::Immediate::parse_immediate(self)?),
+            0b010 => Opcode::NotToModRm(mod_rm),
+            0b011 => Opcode::NegToModRm(mod_rm),
+            0b100 => Opcode::MulToModRm(mod_rm),
+            0b101 => Opcode::ImulToModRm(mod_rm),
+            0b110 => Opcode::DivToModRm(mod_rm),
+            0b111 => Opcode::IdivToModRm(mod_rm),
             _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
         };
 
         Ok(mnemonic)
     }
 
-    fn create_modrm_with_reg_mnemonic_encoding_16_3(
-        &mut self,
+    fn create_modrm_with_reg_mnemonic_encoding_shift<W: OpWidth>(
         mnemonic_encoding: u8,
-        mod_rm: ModRm16,
-    ) -> Result<Opcode, DisassemblerError> {
+        mod_rm: ModRm<W>,
+    ) -> Result<Opcode<W>, DisassemblerError> {
         let mnemonic = match mnemonic_encoding {
-            0b000 => Opcode::TestToModRmFromImmed16(mod_rm, self.parse_word()),
-            0b001 => Opcode::TestToModRmFromImmed16(mod_rm, self.parse_word()),
-            0b010 => Opcode::NotToModRm16(mod_rm),
-            0b011 => Opcode::NegToModRm16(mod_rm),
-            0b100 => Opcode::MulToModRm16(mod_rm),
-            0b101 => Opcode::ImulToModRm16(mod_rm),
-            0b110 => Opcode::DivToModRm16(mod_rm),
-            0b111 => Opcode::IdivToModRm16(mod_rm),
+            0b000 => Opcode::RolToModRm(mod_rm),
+            0b001 => Opcode::RorToModRm(mod_rm),
+            0b010 => Opcode::RclToModRm(mod_rm),
+            0b011 => Opcode::RcrToModRm(mod_rm),
+            0b100 => Opcode::ShlToModRm(mod_rm),
+            0b101 => Opcode::ShrToModRm(mod_rm),
+            0b110 => Opcode::SetmoToModRm(mod_rm),
+            0b111 => Opcode::SarToModRm(mod_rm),
             _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
         };
 
         Ok(mnemonic)
     }
 
-    // TODO: Differentiate between the opcode extension variant in the error type
-    fn create_modrm_with_reg_mnemonic_encoding_8_2(
+    fn create_modrm_with_reg_mnemonic_encoding_shift_cl<W: OpWidth>(
         mnemonic_encoding: u8,
-        mod_rm: ModRm8,
-    ) -> Result<Opcode, DisassemblerError> {
+        mod_rm: ModRm<W>,
+    ) -> Result<Opcode<W>, DisassemblerError> {
         let mnemonic = match mnemonic_encoding {
-            0b000 => Opcode::RolToModRm8(mod_rm),
-            0b001 => Opcode::RorToModRm8(mod_rm),
-            0b010 => Opcode::RclToModRm8(mod_rm),
-            0b011 => Opcode::RcrToModRm8(mod_rm),
-            0b100 => Opcode::ShlToModRm8(mod_rm),
-            0b101 => Opcode::ShrToModRm8(mod_rm),
-
-            // TODO: The manual says 0b110 is unused but there exist tests for it
-            0b110 => Opcode::SetmoToModRm8(mod_rm),
-
-            0b111 => Opcode::SarToModRm8(mod_rm),
+            0b000 => Opcode::RolToModRmCL(mod_rm),
+            0b001 => Opcode::RorToModRmCL(mod_rm),
+            0b010 => Opcode::RclToModRmCL(mod_rm),
+            0b011 => Opcode::RcrToModRmCL(mod_rm),
+            0b100 => Opcode::ShlToModRmCL(mod_rm),
+            0b101 => Opcode::ShrToModRmCL(mod_rm),
+            0b110 => Opcode::SetmoToModRmCL(mod_rm),
+            0b111 => Opcode::SarToModRmCL(mod_rm),
             _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
         };
 
         Ok(mnemonic)
     }
 
-    fn create_modrm_with_reg_mnemonic_encoding_16_2(
+    fn create_modrm_with_reg_mnemonic_encoding_immed<W: OpWidth>(
         mnemonic_encoding: u8,
-        mod_rm: ModRm16,
-    ) -> Result<Opcode, DisassemblerError> {
+        mod_rm: ModRm<W>,
+        immed: W::ImmedGroupImmediate,
+    ) -> Result<Opcode<W>, DisassemblerError> {
         let mnemonic = match mnemonic_encoding {
-            0b000 => Opcode::RolToModRm16(mod_rm),
-            0b001 => Opcode::RorToModRm16(mod_rm),
-            0b010 => Opcode::RclToModRm16(mod_rm),
-            0b011 => Opcode::RcrToModRm16(mod_rm),
-            0b100 => Opcode::ShlToModRm16(mod_rm),
-            0b101 => Opcode::ShrToModRm16(mod_rm),
-
-            // TODO: The manual says 0b110 is unused but there exist tests for it
-            0b110 => Opcode::SetmoToModRm16(mod_rm),
-
-            0b111 => Opcode::SarToModRm16(mod_rm),
+            0b000 => Opcode::AddToModRmFromImmed(mod_rm, immed),
+            0b001 => Opcode::OrToModRmFromImmed(mod_rm, immed),
+            0b010 => Opcode::AdcToModRmFromImmed(mod_rm, immed),
+            0b011 => Opcode::SbbToModRmFromImmed(mod_rm, immed),
+            0b100 => Opcode::AndToModRmFromImmed(mod_rm, immed),
+            0b101 => Opcode::SubToModRmFromImmed(mod_rm, immed),
+            0b110 => Opcode::XorToModRmFromImmed(mod_rm, immed),
+            0b111 => Opcode::CmpToModRmFromImmed(mod_rm, immed),
             _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
         };
 
         Ok(mnemonic)
     }
 
-    fn create_modrm_with_reg_mnemonic_encoding_8_2_cl(
-        mnemonic_encoding: u8,
-        mod_rm: ModRm8,
-    ) -> Result<Opcode, DisassemblerError> {
-        let mnemonic = match mnemonic_encoding {
-            0b000 => Opcode::RolToModRm8CL(mod_rm),
-            0b001 => Opcode::RorToModRm8CL(mod_rm),
-            0b010 => Opcode::RclToModRm8CL(mod_rm),
-            0b011 => Opcode::RcrToModRm8CL(mod_rm),
-            0b100 => Opcode::ShlToModRm8CL(mod_rm),
-            0b101 => Opcode::ShrToModRm8CL(mod_rm),
-
-            // TODO: The manual says 0b110 is unused but there exist tests for it
-            0b110 => Opcode::SetmoToModRm8CL(mod_rm),
-
-            0b111 => Opcode::SarToModRm8CL(mod_rm),
-            _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
-        };
-
-        Ok(mnemonic)
+    fn parse_short_label(&mut self) -> Result<i16, DisassemblerError> {
+        Ok(((self.read_byte()? as i8 as isize) + (self.index as isize)) as i16)
     }
 
-    fn create_modrm_with_reg_mnemonic_encoding_16_2_cl(
-        mnemonic_encoding: u8,
-        mod_rm: ModRm16,
-    ) -> Result<Opcode, DisassemblerError> {
-        let mnemonic = match mnemonic_encoding {
-            0b000 => Opcode::RolToModRm16CL(mod_rm),
-            0b001 => Opcode::RorToModRm16CL(mod_rm),
-            0b010 => Opcode::RclToModRm16CL(mod_rm),
-            0b011 => Opcode::RcrToModRm16CL(mod_rm),
-            0b100 => Opcode::ShlToModRm16CL(mod_rm),
-            0b101 => Opcode::ShrToModRm16CL(mod_rm),
-
-            // TODO: The manual says 0b110 is unused but there exist tests for it
-            0b110 => Opcode::SetmoToModRm16CL(mod_rm),
-
-            0b111 => Opcode::SarToModRm16CL(mod_rm),
-            _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
-        };
-
-        Ok(mnemonic)
-    }
-
-    fn create_modrm_with_reg_mnemonic_encoding_8(
-        mnemonic_encoding: u8,
-        mod_rm: ModRm8,
-        immed: u8,
-    ) -> Result<Opcode, DisassemblerError> {
-        let mnemonic = match mnemonic_encoding {
-            0b000 => Opcode::AddToModRmFromImmed8(mod_rm, immed),
-            0b001 => Opcode::OrToModRmFromImmed8(mod_rm, immed),
-            0b010 => Opcode::AdcToModRmFromImmed8(mod_rm, immed),
-            0b011 => Opcode::SbbToModRmFromImmed8(mod_rm, immed),
-            0b100 => Opcode::AndToModRmFromImmed8(mod_rm, immed),
-            0b101 => Opcode::SubToModRmFromImmed8(mod_rm, immed),
-            0b110 => Opcode::XorToModRmFromImmed8(mod_rm, immed),
-            0b111 => Opcode::CmpToModRmFromImmed8(mod_rm, immed),
-            _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
-        };
-
-        Ok(mnemonic)
-    }
-
-    fn create_modrm_with_reg_mnemonic_encoding_16(
-        mnemonic_encoding: u8,
-        mod_rm: ModRm16,
-        immed: u16,
-    ) -> Result<Opcode, DisassemblerError> {
-        let mnemonic = match mnemonic_encoding {
-            0b000 => Opcode::AddToModRmFromImmed16(mod_rm, immed),
-            0b001 => Opcode::OrToModRmFromImmed16(mod_rm, immed),
-            0b010 => Opcode::AdcToModRmFromImmed16(mod_rm, immed),
-            0b011 => Opcode::SbbToModRmFromImmed16(mod_rm, immed),
-            0b100 => Opcode::AndToModRmFromImmed16(mod_rm, immed),
-            0b101 => Opcode::SubToModRmFromImmed16(mod_rm, immed),
-            0b110 => Opcode::XorToModRmFromImmed16(mod_rm, immed),
-            0b111 => Opcode::CmpToModRmFromImmed16(mod_rm, immed),
-            _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
-        };
-
-        Ok(mnemonic)
-    }
-
-    fn create_modrm_with_reg_mnemonic_encoding_8_sx(
-        mnemonic_encoding: u8,
-        mod_rm: ModRm16,
-        immed: u8,
-    ) -> Result<Opcode, DisassemblerError> {
-        let immed_xs = match ((immed & 0b10000000) >> 7) == 1 {
-            true => (0b11111111 << 8) | immed as u16,
-            false => immed as u16,
-        };
-
-        let mnemonic = match mnemonic_encoding {
-            0b000 => Opcode::AddToModRmFromImmed16(mod_rm, immed_xs),
-            0b001 => Opcode::OrToModRmFromImmed16(mod_rm, immed_xs),
-            0b010 => Opcode::AdcToModRmFromImmed16(mod_rm, immed_xs),
-            0b011 => Opcode::SbbToModRmFromImmed16(mod_rm, immed_xs),
-            0b100 => Opcode::AndToModRmFromImmed16(mod_rm, immed_xs),
-            0b101 => Opcode::SubToModRmFromImmed16(mod_rm, immed_xs),
-            0b110 => Opcode::XorToModRmFromImmed16(mod_rm, immed_xs),
-            0b111 => Opcode::CmpToModRmFromImmed16(mod_rm, immed_xs),
-            _ => return Err(DisassemblerError::InvalidOpcodeExtension(mnemonic_encoding)),
-        };
-
-        Ok(mnemonic)
-    }
-
-    fn parse_short_label(&mut self) -> i16 {
-        ((self.parse_byte() as i8 as isize) + (self.index as isize)) as i16
-    }
-
-    fn parse_jump_word(&mut self) -> i16 {
-        ((self.parse_word() as i16 as isize) + (self.index as isize)) as i16
+    fn parse_jump_word(&mut self) -> Result<i16, DisassemblerError> {
+        Ok(((self.read_word()? as i16 as isize) + (self.index as isize)) as i16)
     }
 
     fn parse_mod_sr_rm(
         &mut self,
-        sr_override: Option<SegmentRegister>,
-    ) -> Result<(ModRm16, SegmentRegister), DisassemblerError> {
-        let (mod_rm, gen_reg) = self.parse_mod_reg_rm(sr_override)?;
+        prefixes: &mut Prefixes,
+    ) -> Result<(ModRm<Width16>, SegmentRegister), DisassemblerError> {
+        let (mod_rm, gen_reg) = self.parse_mod_reg_rm(prefixes)?;
 
-        Ok((mod_rm, gen_reg.to_sr()))
+        Ok((mod_rm, SegmentRegister::from(gen_reg)))
     }
 
     // TODO: If this knew the D bit, then it could order the operands correctly
-    fn parse_mod_reg_rm<M: SizedModRm>(
+    fn parse_mod_reg_rm<W: OpWidth>(
         &mut self,
-        sr_override: Option<SegmentRegister>,
-    ) -> Result<(M, M::Reg), DisassemblerError> {
-        let mode = Mode::from_byte(self.bytes[self.index])?;
-        let reg = M::Reg::from_byte(self.bytes[self.index]);
-        let rm = RM::from_byte(self.bytes[self.index])?;
+        prefixes: &mut Prefixes,
+    ) -> Result<(ModRm<W>, W::Register), DisassemblerError> {
+        let mode = Mode::from_modrm(self.bytes[self.index]);
+        let reg = W::Register::from(RegCode::from_modrm_reg(self.bytes[self.index]));
+        let rm = RmCode::from_modrm(self.bytes[self.index]);
         self.index += 1;
 
         let mod_rm = match mode {
-            Mode::Register => M::from_register(M::Reg::from_reg_encoding(rm.to_encoding())),
+            Mode::Register => ModRm::Register(W::Register::from(rm)),
             _ => {
                 let (base, index_reg) = match rm {
-                    RM::Rm000 => (GeneralRegister16::BX, Some(GeneralRegister16::SI)),
-                    RM::Rm001 => (GeneralRegister16::BX, Some(GeneralRegister16::DI)),
-                    RM::Rm010 => (GeneralRegister16::BP, Some(GeneralRegister16::SI)),
-                    RM::Rm011 => (GeneralRegister16::BP, Some(GeneralRegister16::DI)),
-                    RM::Rm100 => (GeneralRegister16::SI, None),
-                    RM::Rm101 => (GeneralRegister16::DI, None),
-                    RM::Rm110 => (GeneralRegister16::BP, None),
-                    RM::Rm111 => (GeneralRegister16::BX, None),
+                    RmCode::Rm000 => (GeneralRegister16::BX, Some(GeneralRegister16::SI)),
+                    RmCode::Rm001 => (GeneralRegister16::BX, Some(GeneralRegister16::DI)),
+                    RmCode::Rm010 => (GeneralRegister16::BP, Some(GeneralRegister16::SI)),
+                    RmCode::Rm011 => (GeneralRegister16::BP, Some(GeneralRegister16::DI)),
+                    RmCode::Rm100 => (GeneralRegister16::SI, None),
+                    RmCode::Rm101 => (GeneralRegister16::DI, None),
+                    RmCode::Rm110 => (GeneralRegister16::BP, None),
+                    RmCode::Rm111 => (GeneralRegister16::BX, None),
                 };
 
-                let sr = match sr_override {
+                let sr = match prefixes.sr_override {
                     Some(reg) => reg,
                     None => match base {
                         GeneralRegister16::BP => SegmentRegister::SS,
@@ -789,34 +826,34 @@ impl Disassembler {
                 };
 
                 if mode == Mode::Mem8BitDisplacement {
-                    M::from_mem(MemoryIndex {
-                        displacement: Some(Immediate::Byte(self.parse_byte())),
+                    ModRm::from_mem(MemoryIndex {
+                        displacement: Some(Immediate::Byte(self.read_byte()?)),
                         base: Some(base),
                         index: index_reg,
                         sr,
                     })
                 } else if mode == Mode::Mem16BitDisplacement {
-                    M::from_mem(MemoryIndex {
-                        displacement: Some(Immediate::Word(self.parse_word())),
+                    ModRm::from_mem(MemoryIndex {
+                        displacement: Some(Immediate::Word(self.read_word()?)),
                         base: Some(base),
                         index: index_reg,
                         sr,
                     })
                 } else if mode == Mode::MemNoDisplacement {
-                    if rm == RM::Rm110 {
-                        let sr = match sr_override {
+                    if rm == RmCode::Rm110 {
+                        let sr = match prefixes.sr_override {
                             Some(reg) => reg,
                             None => SegmentRegister::DS,
                         };
 
-                        M::from_mem(MemoryIndex {
-                            displacement: Some(Immediate::Word(self.parse_word())),
+                        ModRm::from_mem(MemoryIndex {
+                            displacement: Some(Immediate::Word(self.read_word()?)),
                             base: None,
                             index: None,
                             sr,
                         })
                     } else {
-                        M::from_mem(MemoryIndex {
+                        ModRm::from_mem(MemoryIndex {
                             displacement: None,
                             base: Some(base),
                             index: index_reg,
@@ -832,18 +869,33 @@ impl Disassembler {
         Ok((mod_rm, reg))
     }
 
-    fn parse_byte(&mut self) -> u8 {
-        let byte = self.bytes[self.index];
-        self.index += 1;
+    // fn read_byte(&mut self) -> u8 {
+    //     let byte = self.bytes[self.index];
+    //     self.index += 1;
 
-        byte
-    }
+    //     byte
+    // }
 
-    fn parse_word(&mut self) -> u16 {
-        let word = u16::from_le_bytes([self.bytes[self.index], self.bytes[self.index + 1]]);
-        self.index += 2;
+    // fn read_word(&mut self) -> u16 {
+    //     let word = u16::from_le_bytes([self.bytes[self.index], self.bytes[self.index + 1]]);
+    //     self.index += 2;
 
-        word
+    //     word
+    // }
+}
+
+impl ByteReader for Disassembler {
+    type Error = DisassemblerError;
+
+    fn read_byte(&mut self) -> Result<u8, Self::Error> {
+        match self.bytes.get(self.index) {
+            None => Err(DisassemblerError::EOF),
+            Some(byte) => {
+                self.index += 1;
+
+                Ok(*byte)
+            }
+        }
     }
 }
 
@@ -985,7 +1037,7 @@ mod tests {
                 for test_spec in test_list {
                     let mut disassembler = Disassembler::from_bytes(test_spec.bytes.clone());
                     disassembler.disassemble().unwrap();
-                    let observed_name = disassembler.dump();
+                    let observed_name = disassembler.dump_operations();
 
                     if observed_name != test_spec.name {
                         num_wrong += 1;
@@ -1007,7 +1059,7 @@ mod tests {
         let bytes = vec![0x9B];
         let mut disassembler = Disassembler::from_bytes(bytes.clone());
         disassembler.disassemble().unwrap();
-        let observed_name = disassembler.dump();
+        let observed_name = disassembler.dump_operations();
 
         assert_eq!(observed_name, "wait");
     }

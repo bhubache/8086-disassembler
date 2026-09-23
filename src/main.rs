@@ -4,12 +4,16 @@ use crate::disassembler::Disassembler;
 
 mod disassembler;
 mod disassembler_macros;
+mod immediate;
+mod immediate_parsing;
 mod instruction;
 mod instruction_macros;
 mod mode;
 mod operand;
+mod prefixes;
 mod register;
 mod rm;
+mod width;
 
 // TODO: Provide polished CLI via clap
 fn main() {

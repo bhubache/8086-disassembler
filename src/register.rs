@@ -1,9 +1,85 @@
 use std::fmt;
 
-pub trait SizedRegister {
-    fn from_byte(byte: u8) -> Self;
-    fn from_reg_encoding(reg: u8) -> Self;
-    fn to_sr(&self) -> SegmentRegister;
+use crate::rm::RmCode;
+
+pub trait GeneralRegister: From<RmCode> + From<RegCode> + fmt::Display + fmt::Debug {}
+
+#[derive(Debug)]
+pub struct InvalidRegEncoding(pub u8);
+
+impl fmt::Display for InvalidRegEncoding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "invalid register encoding {:03b}; expected a value in the range 0b000 - 0b111",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for InvalidRegEncoding {}
+
+#[derive(Debug)]
+pub enum RegCode {
+    Reg000,
+    Reg001,
+    Reg010,
+    Reg011,
+    Reg100,
+    Reg101,
+    Reg110,
+    Reg111,
+}
+
+impl RegCode {
+    pub fn from_modrm_reg(value: u8) -> Self {
+        Self::from_3_bits((value & 0b00111000) >> 3)
+    }
+
+    pub fn from_modrm_rm(value: u8) -> Self {
+        Self::from_3_bits(value & 0b000111)
+    }
+
+    fn from_3_bits(value: u8) -> Self {
+        match value {
+            0b000 => RegCode::Reg000,
+            0b001 => RegCode::Reg001,
+            0b010 => RegCode::Reg010,
+            0b011 => RegCode::Reg011,
+            0b100 => RegCode::Reg100,
+            0b101 => RegCode::Reg101,
+            0b110 => RegCode::Reg110,
+            0b111 => RegCode::Reg111,
+            _ => unreachable!("caller guarantees 3-bit value"),
+        }
+    }
+}
+
+impl From<GeneralRegister16> for RegCode {
+    fn from(value: GeneralRegister16) -> Self {
+        match value {
+            GeneralRegister16::AX => Self::Reg000,
+            GeneralRegister16::CX => Self::Reg001,
+            GeneralRegister16::DX => Self::Reg010,
+            GeneralRegister16::BX => Self::Reg011,
+            GeneralRegister16::SP => Self::Reg100,
+            GeneralRegister16::BP => Self::Reg101,
+            GeneralRegister16::SI => Self::Reg110,
+            GeneralRegister16::DI => Self::Reg111,
+        }
+    }
+}
+
+impl TryFrom<u8> for RegCode {
+    type Error = InvalidRegEncoding;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        if value > 0b111 {
+            Err(InvalidRegEncoding(value))
+        } else {
+            Ok(Self::from_3_bits(value))
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -21,36 +97,32 @@ pub enum GeneralRegister8 {
     BH,
 }
 
-impl SizedRegister for GeneralRegister8 {
-    fn from_byte(byte: u8) -> Self {
-        Self::from_reg_encoding((byte & 0b00111000) >> 3)
-    }
-
-    fn from_reg_encoding(reg: u8) -> Self {
-        match reg {
-            0b000 => Self::AL,
-            0b001 => Self::CL,
-            0b010 => Self::DL,
-            0b011 => Self::BL,
-            0b100 => Self::AH,
-            0b101 => Self::CH,
-            0b110 => Self::DH,
-            0b111 => Self::BH,
-            _ => panic!("Unexpected register encoded as byte {:08b}", reg),
+impl From<RegCode> for GeneralRegister8 {
+    fn from(value: RegCode) -> Self {
+        match value {
+            RegCode::Reg000 => Self::AL,
+            RegCode::Reg001 => Self::CL,
+            RegCode::Reg010 => Self::DL,
+            RegCode::Reg011 => Self::BL,
+            RegCode::Reg100 => Self::AH,
+            RegCode::Reg101 => Self::CH,
+            RegCode::Reg110 => Self::DH,
+            RegCode::Reg111 => Self::BH,
         }
     }
+}
 
-    fn to_sr(&self) -> SegmentRegister {
-        match self {
-            Self::AL => SegmentRegister::ES,
-            Self::CL => SegmentRegister::CS,
-            Self::DL => SegmentRegister::SS,
-            Self::BL => SegmentRegister::DS,
-
-            Self::AH => SegmentRegister::ES,
-            Self::CH => SegmentRegister::CS,
-            Self::DH => SegmentRegister::SS,
-            Self::BH => SegmentRegister::DS,
+impl From<RmCode> for GeneralRegister8 {
+    fn from(value: RmCode) -> Self {
+        match value {
+            RmCode::Rm000 => Self::AL,
+            RmCode::Rm001 => Self::CL,
+            RmCode::Rm010 => Self::DL,
+            RmCode::Rm011 => Self::BL,
+            RmCode::Rm100 => Self::AH,
+            RmCode::Rm101 => Self::CH,
+            RmCode::Rm110 => Self::DH,
+            RmCode::Rm111 => Self::BH,
         }
     }
 }
@@ -70,6 +142,8 @@ impl fmt::Display for GeneralRegister8 {
     }
 }
 
+impl GeneralRegister for GeneralRegister8 {}
+
 #[derive(Debug, Copy, Clone)]
 pub enum GeneralRegister16 {
     AX, // Accumulator
@@ -82,36 +156,32 @@ pub enum GeneralRegister16 {
     DI, // Destination index
 }
 
-impl SizedRegister for GeneralRegister16 {
-    fn from_byte(byte: u8) -> Self {
-        Self::from_reg_encoding((byte & 0b00111000) >> 3)
-    }
-
-    fn from_reg_encoding(reg: u8) -> Self {
-        match reg {
-            0b000 => Self::AX,
-            0b001 => Self::CX,
-            0b010 => Self::DX,
-            0b011 => Self::BX,
-            0b100 => Self::SP,
-            0b101 => Self::BP,
-            0b110 => Self::SI,
-            0b111 => Self::DI,
-            _ => panic!("Unexpected register encoded as word {:8b}", reg),
+impl From<RegCode> for GeneralRegister16 {
+    fn from(value: RegCode) -> Self {
+        match value {
+            RegCode::Reg000 => Self::AX,
+            RegCode::Reg001 => Self::CX,
+            RegCode::Reg010 => Self::DX,
+            RegCode::Reg011 => Self::BX,
+            RegCode::Reg100 => Self::SP,
+            RegCode::Reg101 => Self::BP,
+            RegCode::Reg110 => Self::SI,
+            RegCode::Reg111 => Self::DI,
         }
     }
+}
 
-    fn to_sr(&self) -> SegmentRegister {
-        match self {
-            Self::AX => SegmentRegister::ES,
-            Self::CX => SegmentRegister::CS,
-            Self::DX => SegmentRegister::SS,
-            Self::BX => SegmentRegister::DS,
-
-            Self::SP => SegmentRegister::ES,
-            Self::BP => SegmentRegister::CS,
-            Self::SI => SegmentRegister::SS,
-            Self::DI => SegmentRegister::DS,
+impl From<RmCode> for GeneralRegister16 {
+    fn from(value: RmCode) -> Self {
+        match value {
+            RmCode::Rm000 => Self::AX,
+            RmCode::Rm001 => Self::CX,
+            RmCode::Rm010 => Self::DX,
+            RmCode::Rm011 => Self::BX,
+            RmCode::Rm100 => Self::SP,
+            RmCode::Rm101 => Self::BP,
+            RmCode::Rm110 => Self::SI,
+            RmCode::Rm111 => Self::DI,
         }
     }
 }
@@ -131,6 +201,74 @@ impl fmt::Display for GeneralRegister16 {
     }
 }
 
+impl GeneralRegister for GeneralRegister16 {}
+
+#[derive(Debug)]
+pub struct InvalidSrEncoding(u8);
+
+impl fmt::Display for InvalidSrEncoding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "invalid segment register encoding {:02b}; expected a value in the range 0b00 - 0b11",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for InvalidSrEncoding {}
+
+#[derive(Debug)]
+pub enum SrCode {
+    Sr00,
+    Sr01,
+    Sr10,
+    Sr11,
+}
+
+impl SrCode {
+    pub fn from_byte(value: u8) -> Self {
+        Self::from_2_bits((value & 0b00011000) >> 3)
+    }
+
+    fn from_2_bits(value: u8) -> Self {
+        match value {
+            0b00 => SrCode::Sr00,
+            0b01 => SrCode::Sr01,
+            0b10 => SrCode::Sr10,
+            0b11 => SrCode::Sr11,
+            _ => unreachable!("caller guarantees 2-bit value"),
+        }
+    }
+}
+
+impl TryFrom<u8> for SrCode {
+    type Error = InvalidSrEncoding;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        if value > 0b11 {
+            Err(InvalidSrEncoding(value))
+        } else {
+            Ok(Self::from_2_bits(value))
+        }
+    }
+}
+
+impl From<RegCode> for SrCode {
+    fn from(value: RegCode) -> Self {
+        match value {
+            RegCode::Reg000 => Self::Sr00,
+            RegCode::Reg001 => Self::Sr01,
+            RegCode::Reg010 => Self::Sr10,
+            RegCode::Reg011 => Self::Sr11,
+            RegCode::Reg100 => Self::Sr00,
+            RegCode::Reg101 => Self::Sr01,
+            RegCode::Reg110 => Self::Sr10,
+            RegCode::Reg111 => Self::Sr11,
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub enum SegmentRegister {
     ES,
@@ -139,19 +277,23 @@ pub enum SegmentRegister {
     DS,
 }
 
-impl SegmentRegister {
-    pub fn from_byte(byte: u8) -> Self {
-        SegmentRegister::from_encoding((byte & 0b00011000) >> 3)
-    }
-
-    pub fn from_encoding(reg: u8) -> Self {
-        match reg {
-            0b00 => Self::ES,
-            0b01 => Self::CS,
-            0b10 => Self::SS,
-            0b11 => Self::DS,
-            _ => panic!("Unexpected segment register encoding {}", reg),
+impl From<SrCode> for SegmentRegister {
+    fn from(value: SrCode) -> Self {
+        match value {
+            SrCode::Sr00 => Self::ES,
+            SrCode::Sr01 => Self::CS,
+            SrCode::Sr10 => Self::SS,
+            SrCode::Sr11 => Self::DS,
         }
+    }
+}
+
+impl From<GeneralRegister16> for SegmentRegister {
+    fn from(value: GeneralRegister16) -> Self {
+        let reg_code: RegCode = value.into();
+        let sr_code: SrCode = reg_code.into();
+
+        SegmentRegister::from(sr_code)
     }
 }
 

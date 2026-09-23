@@ -2,27 +2,49 @@ use std::fmt;
 
 use crate::impl_opcodes_display;
 use crate::operand::MemoryIndex;
-use crate::operand::ModRm8;
-use crate::operand::ModRm16;
-use crate::register::GeneralRegister8;
+use crate::operand::ModRm;
 use crate::register::GeneralRegister16;
 use crate::register::SegmentRegister;
+use crate::width::OpWidth;
+use crate::width::Width8;
+use crate::width::Width16;
 
 use paste::paste;
 
 pub struct Instruction {
     pub address: usize,
-    pub opcode: Opcode,
+    pub operation: Operation,
 }
 
 impl Instruction {
-    pub fn new(address: usize, opcode: Opcode) -> Self {
-        Instruction { address, opcode }
+    pub fn new(address: usize, operation: Operation) -> Self {
+        Instruction { address, operation }
+    }
+}
+
+impl fmt::Display for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:04X}    {}", self.address, self.operation)
     }
 }
 
 #[derive(Debug)]
-pub enum Opcode {
+pub enum Operation {
+    Width8(Opcode<Width8>),
+    Width16(Opcode<Width16>),
+}
+
+impl fmt::Display for Operation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Width8(opcode) => write!(f, "{}", opcode),
+            Self::Width16(opcode) => write!(f, "{}", opcode),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Opcode<W: OpWidth> {
     // Segment Register
     SROverride(SegmentRegister),
 
@@ -30,16 +52,12 @@ pub enum Opcode {
     Rep(Option<SegmentRegister>, RepeatableStringInstruction),
     Repne(Option<SegmentRegister>, RepeatableStringInstruction),
 
-    // Include <Opcode>ToModRmFromImmed8 and <Opcode>ToModRmFromImmed16 in macro as well?
     // add
-    AddFromReg8(ModRm8, GeneralRegister8),
-    AddFromReg16(ModRm16, GeneralRegister16),
-    AddToReg8(GeneralRegister8, ModRm8),
-    AddToReg16(GeneralRegister16, ModRm16),
-    AddToALFromImmed8(u8),
-    AddToAXFromImmed16(u16),
-    AddToModRmFromImmed8(ModRm8, u8),
-    AddToModRmFromImmed16(ModRm16, u16),
+    AddFromReg(ModRm<W>, W::Register),
+    AddToReg(W::Register, ModRm<W>),
+    AddToALFromImmed8(W::Immediate),
+    AddToAXFromImmed16(W::Immediate),
+    AddToModRmFromImmed(ModRm<W>, W::ImmedGroupImmediate),
 
     // push
     PushSR(SegmentRegister),
@@ -48,78 +66,62 @@ pub enum Opcode {
 
     // TODO: The manual says this is MEM16, but there's at least one hardware generated test that has a
     // register as input
-    PushModRm16(ModRm16),
+    PushModRm16(ModRm<Width16>),
 
     // // pop
     PopSR(SegmentRegister),
     PopGR16(GeneralRegister16),
-    PopModRm(ModRm16),
+    PopModRm(ModRm<Width16>),
 
     // or
-    OrFromReg8(ModRm8, GeneralRegister8),
-    OrFromReg16(ModRm16, GeneralRegister16),
-    OrToReg8(GeneralRegister8, ModRm8),
-    OrToReg16(GeneralRegister16, ModRm16),
-    OrToALFromImmed8(u8),
-    OrToAXFromImmed16(u16),
-    OrToModRmFromImmed8(ModRm8, u8),
-    OrToModRmFromImmed16(ModRm16, u16),
+    OrFromReg(ModRm<W>, W::Register),
+    OrToReg(W::Register, ModRm<W>),
+    OrToALFromImmed8(W::Immediate),
+    OrToAXFromImmed16(W::Immediate),
+    // TODO: If we associated u<8/16> width OpWidth, we should be able to consolidate these two
+    // opcodes
+    OrToModRmFromImmed(ModRm<W>, W::ImmedGroupImmediate),
 
     // adc
-    AdcFromReg8(ModRm8, GeneralRegister8),
-    AdcFromReg16(ModRm16, GeneralRegister16),
-    AdcToReg8(GeneralRegister8, ModRm8),
-    AdcToReg16(GeneralRegister16, ModRm16),
-    AdcToALFromImmed8(u8),
-    AdcToAXFromImmed16(u16),
-    AdcToModRmFromImmed8(ModRm8, u8),
-    AdcToModRmFromImmed16(ModRm16, u16),
+    AdcFromReg(ModRm<W>, W::Register),
+    AdcToReg(W::Register, ModRm<W>),
+    AdcToALFromImmed8(W::Immediate),
+    AdcToAXFromImmed16(W::Immediate),
+    AdcToModRmFromImmed(ModRm<W>, W::ImmedGroupImmediate),
 
     // sbb
-    SbbFromReg8(ModRm8, GeneralRegister8),
-    SbbFromReg16(ModRm16, GeneralRegister16),
-    SbbToReg8(GeneralRegister8, ModRm8),
-    SbbToReg16(GeneralRegister16, ModRm16),
-    SbbToALFromImmed8(u8),
-    SbbToAXFromImmed16(u16),
-    SbbToModRmFromImmed8(ModRm8, u8),
-    SbbToModRmFromImmed16(ModRm16, u16),
+    SbbFromReg(ModRm<W>, W::Register),
+    SbbToReg(W::Register, ModRm<W>),
+    SbbToALFromImmed8(W::Immediate),
+    SbbToAXFromImmed16(W::Immediate),
+    SbbToModRmFromImmed(ModRm<W>, W::ImmedGroupImmediate),
 
     // and
-    AndFromReg8(ModRm8, GeneralRegister8),
-    AndFromReg16(ModRm16, GeneralRegister16),
-    AndToReg8(GeneralRegister8, ModRm8),
-    AndToReg16(GeneralRegister16, ModRm16),
-    AndToALFromImmed8(u8),
-    AndToAXFromImmed16(u16),
-    AndToModRmFromImmed8(ModRm8, u8),
-    AndToModRmFromImmed16(ModRm16, u16),
+    AndFromReg(ModRm<W>, W::Register),
+    AndToReg(W::Register, ModRm<W>),
+    AndToALFromImmed8(W::Immediate),
+    AndToAXFromImmed16(W::Immediate),
+    AndToModRmFromImmed(ModRm<W>, W::ImmedGroupImmediate),
 
     // daa
     Daa,
 
     // sub
-    SubFromReg8(ModRm8, GeneralRegister8),
-    SubFromReg16(ModRm16, GeneralRegister16),
-    SubToReg8(GeneralRegister8, ModRm8),
-    SubToReg16(GeneralRegister16, ModRm16),
-    SubToALFromImmed8(u8),
-    SubToAXFromImmed16(u16),
-    SubToModRmFromImmed8(ModRm8, u8),
-    SubToModRmFromImmed16(ModRm16, u16),
+    SubFromReg(ModRm<W>, W::Register),
+    SubToReg(W::Register, ModRm<W>),
+    SubToALFromImmed8(W::Immediate),
+    SubToAXFromImmed16(W::Immediate),
+    SubToModRmFromImmed(ModRm<W>, W::ImmedGroupImmediate),
 
     // das
     Das,
 
     // xor
-    XorFromReg8(ModRm8, GeneralRegister8),
-    XorFromReg16(ModRm16, GeneralRegister16),
-    XorToReg8(GeneralRegister8, ModRm8),
-    XorToReg16(GeneralRegister16, ModRm16),
-    XorToALFromImmed8(u8),
-    XorToAXFromImmed16(u16),
-    XorToModRmFromImmed8(ModRm8, u8),
-    XorToModRmFromImmed16(ModRm16, u16),
+    XorFromReg(ModRm<W>, W::Register),
+    XorToReg(W::Register, ModRm<W>),
+    XorToALFromImmed8(W::Immediate),
+    XorToAXFromImmed16(W::Immediate),
+    XorToModRmFromImmed(ModRm<W>, W::ImmedGroupImmediate),
 
     // aaa
     Aaa,
@@ -128,24 +130,19 @@ pub enum Opcode {
     Aas,
 
     // cmp
-    CmpFromReg8(ModRm8, GeneralRegister8),
-    CmpFromReg16(ModRm16, GeneralRegister16),
-    CmpToReg8(GeneralRegister8, ModRm8),
-    CmpToReg16(GeneralRegister16, ModRm16),
-    CmpToALFromImmed8(u8),
-    CmpToAXFromImmed16(u16),
-    CmpToModRmFromImmed8(ModRm8, u8),
-    CmpToModRmFromImmed16(ModRm16, u16),
+    CmpFromReg(ModRm<W>, W::Register),
+    CmpToReg(W::Register, ModRm<W>),
+    CmpToALFromImmed8(W::Immediate),
+    CmpToAXFromImmed16(W::Immediate),
+    CmpToModRmFromImmed(ModRm<W>, W::ImmedGroupImmediate),
 
     // inc
     IncGR16(GeneralRegister16),
-    IncModRm8(ModRm8),
-    IncModRm16(ModRm16),
+    IncModRm(ModRm<W>),
 
     // dec
     DecGR16(GeneralRegister16),
-    DecModRm8(ModRm8),
-    DecModRm16(ModRm16),
+    DecModRm(ModRm<W>),
 
     // Is i16 correct?
     Jb(i16),
@@ -167,31 +164,25 @@ pub enum Opcode {
     Jcxz(i16),
 
     // test
-    TestFromReg8(ModRm8, GeneralRegister8),
-    TestFromReg16(ModRm16, GeneralRegister16),
+    TestFromReg(ModRm<W>, W::Register),
 
     // FIXME: These may not actually exist, temporarily including them to satisfy the
     // `impl_opcodes_display` macro
-    TestToReg8(GeneralRegister8, ModRm8),
-    TestToReg16(GeneralRegister16, ModRm16),
+    TestToReg(W::Register, ModRm<W>),
 
-    TestToALFromImmed8(u8),
-    TestToAXFromImmed16(u16),
-    TestToModRmFromImmed8(ModRm8, u8),
-    TestToModRmFromImmed16(ModRm16, u16),
+    TestToALFromImmed8(W::Immediate),
+    TestToAXFromImmed16(W::Immediate),
+    TestToModRmFromImmed(ModRm<W>, W::Immediate),
 
     // xchg
-    XchgToReg8(GeneralRegister8, ModRm8),
-    XchgToReg16(GeneralRegister16, ModRm16),
+    XchgToReg(W::Register, ModRm<W>),
 
     // FIXME: These may not actually exist, temporarily including them to satisfy the
     // `impl_opcodes_display` macro
-    XchgFromReg8(ModRm8, GeneralRegister8),
-    XchgFromReg16(ModRm16, GeneralRegister16),
-    XchgToALFromImmed8(u8),
-    XchgToAXFromImmed16(u16),
-    XchgToModRmFromImmed8(ModRm8, u8),
-    XchgToModRmFromImmed16(ModRm16, u16),
+    XchgFromReg(ModRm<W>, W::Register),
+    XchgToALFromImmed8(W::Immediate),
+    XchgToAXFromImmed16(W::Immediate),
+    XchgToModRmFromImmed(ModRm<W>, W::Immediate),
 
     XchgToAXFromCX,
     XchgToAXFromDX,
@@ -202,28 +193,23 @@ pub enum Opcode {
     XchgToAXFromDI,
 
     // mov
-    MovFromReg8(ModRm8, GeneralRegister8),
-    MovFromReg16(ModRm16, GeneralRegister16),
-    MovToReg8(GeneralRegister8, ModRm8),
-    MovToReg16(GeneralRegister16, ModRm16),
-    MovToALFromImmed8(u8),
-    MovToAXFromImmed16(u16),
+    MovFromReg(ModRm<W>, W::Register),
+    MovToReg(W::Register, ModRm<W>),
+    MovToALFromImmed8(W::Immediate),
+    MovToAXFromImmed16(W::Immediate),
 
     // FIXME: These may not actually exist, temporarily including them to satisfy the
     // `impl_opcodes_display` macro
-    MovToModRmFromImmed8(ModRm8, u8),
-    MovToModRmFromImmed16(ModRm16, u16),
+    MovToModRmFromImmed(ModRm<W>, W::Immediate),
 
-    MovFromSR(ModRm16, SegmentRegister),
-    MovToSR(SegmentRegister, ModRm16),
+    MovFromSR(ModRm<Width16>, SegmentRegister),
+    MovToSR(SegmentRegister, ModRm<Width16>),
     MovToALFromMem8(MemoryIndex),
     MovToAXFromMem16(MemoryIndex),
     MovToMem8FromAL(MemoryIndex),
     MovToMem16FromAL(MemoryIndex),
-    MovToGR8FromImmed8(GeneralRegister8, u8),
-    MovToGR16FromImmed16(GeneralRegister16, u16),
-    MovToMem8FromImmed8(ModRm8, u8),
-    MovToMem16FromImmed16(ModRm16, u16),
+    MovToGRFromImmed(W::Register, W::Immediate),
+    MovToMemFromImmed(ModRm<W>, W::Immediate),
 
     // lea
     // TODO: I believe ModRm16 should actually be something like MemoryIndex16
@@ -241,7 +227,7 @@ pub enum Opcode {
     // call
     CallFarProc(String),
     CallNearProc(String),
-    CallModRm16(ModRm16),
+    CallModRm16(ModRm<Width16>),
     CallMem16(MemoryIndex),
     Wait,
     PushF,
@@ -271,9 +257,11 @@ pub enum Opcode {
     ScaS16(Option<SegmentRegister>),
 
     // ret
-    RetIntraSegImmed16(u16),
+    // TODO: Should these immediates explicitly be 16 bits because there's no opcode that accepts 8
+    // bits?
+    RetIntraSegImmed16(W::Immediate),
     RetIntraSeg,
-    RetInterSegImmed16(u16),
+    RetInterSegImmed16(W::Immediate),
     RetInterSeg,
 
     // les
@@ -284,7 +272,7 @@ pub enum Opcode {
 
     // int
     Int3,
-    IntFromImmed8(u8),
+    IntFromImmed8(W::Immediate),
 
     // into
     Into,
@@ -293,62 +281,46 @@ pub enum Opcode {
     Iret,
 
     // rol
-    RolToModRm8(ModRm8),
-    RolToModRm16(ModRm16),
-    RolToModRm8CL(ModRm8),
-    RolToModRm16CL(ModRm16),
+    RolToModRm(ModRm<W>),
+    RolToModRmCL(ModRm<W>),
 
     // ror
-    RorToModRm8(ModRm8),
-    RorToModRm16(ModRm16),
-    RorToModRm8CL(ModRm8),
-    RorToModRm16CL(ModRm16),
+    RorToModRm(ModRm<W>),
+    RorToModRmCL(ModRm<W>),
 
     // rcl
-    RclToModRm8(ModRm8),
-    RclToModRm16(ModRm16),
-    RclToModRm8CL(ModRm8),
-    RclToModRm16CL(ModRm16),
+    RclToModRm(ModRm<W>),
+    RclToModRmCL(ModRm<W>),
 
     // rcr
-    RcrToModRm8(ModRm8),
-    RcrToModRm16(ModRm16),
-    RcrToModRm8CL(ModRm8),
-    RcrToModRm16CL(ModRm16),
+    RcrToModRm(ModRm<W>),
+    RcrToModRmCL(ModRm<W>),
 
     // shl
-    ShlToModRm8(ModRm8),
-    ShlToModRm16(ModRm16),
-    ShlToModRm8CL(ModRm8),
-    ShlToModRm16CL(ModRm16),
+    ShlToModRm(ModRm<W>),
+    ShlToModRmCL(ModRm<W>),
 
     // shr
-    ShrToModRm8(ModRm8),
-    ShrToModRm16(ModRm16),
-    ShrToModRm8CL(ModRm8),
-    ShrToModRm16CL(ModRm16),
+    ShrToModRm(ModRm<W>),
+    ShrToModRmCL(ModRm<W>),
 
     // sar
-    SetmoToModRm8(ModRm8),
-    SarToModRm8(ModRm8),
-    SetmoToModRm16(ModRm16),
-    SarToModRm16(ModRm16),
-    SetmoToModRm8CL(ModRm8),
-    SarToModRm8CL(ModRm8),
-    SetmoToModRm16CL(ModRm16),
-    SarToModRm16CL(ModRm16),
+    SetmoToModRm(ModRm<W>),
+    SetmoToModRmCL(ModRm<W>),
+    SarToModRm(ModRm<W>),
+    SarToModRmCL(ModRm<W>),
 
     // aam
-    Aam(u8),
+    Aam(W::Immediate),
 
     // aad
-    Aad(u8),
+    Aad(W::Immediate),
 
     // xlat
     Xlat,
 
     // esc
-    Esc(ModRm16),
+    Esc(ModRm<Width16>),
 
     // loopnz/loopne
     Loopne(i16),
@@ -360,14 +332,14 @@ pub enum Opcode {
     Loop(i16),
 
     // in
-    InToALFromImmed8(u8),
-    InToAXFromImmed8(u8),
+    InToALFromImmed8(W::Immediate),
+    InToAXFromImmed8(W::Immediate),
     InToALFromDX,
     InToAXFromDX,
 
     // out
-    OutToPort8FromAL(u8),
-    OutToPort8FromAX(u8),
+    OutToPort8FromAL(W::Immediate),
+    OutToPort8FromAX(W::Immediate),
     OutToDXFromAL,
     OutToDXFromAX,
 
@@ -387,28 +359,22 @@ pub enum Opcode {
     Cmc,
 
     // not
-    NotToModRm8(ModRm8),
-    NotToModRm16(ModRm16),
+    NotToModRm(ModRm<W>),
 
     // neg
-    NegToModRm8(ModRm8),
-    NegToModRm16(ModRm16),
+    NegToModRm(ModRm<W>),
 
     // mul
-    MulToModRm8(ModRm8),
-    MulToModRm16(ModRm16),
+    MulToModRm(ModRm<W>),
 
     // imul
-    ImulToModRm8(ModRm8),
-    ImulToModRm16(ModRm16),
+    ImulToModRm(ModRm<W>),
 
     // div
-    DivToModRm8(ModRm8),
-    DivToModRm16(ModRm16),
+    DivToModRm(ModRm<W>),
 
     // idiv
-    IdivToModRm8(ModRm8),
-    IdivToModRm16(ModRm16),
+    IdivToModRm(ModRm<W>),
 
     // clc
     Clc,
@@ -432,7 +398,7 @@ pub enum Opcode {
     JmpNearLabel(String),
     JmpFarLabel(String),
     JmpShortLabel(i16),
-    JmpModRm16(ModRm16),
+    JmpModRm16(ModRm<Width16>),
     JmpMem16(MemoryIndex),
 
     // salc - set AL to Carry
