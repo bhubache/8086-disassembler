@@ -7,7 +7,6 @@ mod disassembler_macros;
 mod immediate;
 mod immediate_parsing;
 mod instruction;
-mod instruction_macros;
 mod mode;
 mod operand;
 mod prefixes;

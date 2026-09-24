@@ -3,9 +3,6 @@ name = "disassembler-8086"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-paste = "1.0.15"
-
 [dev-dependencies]
 flate2 = "1.1.10"
 reqwest = { version = "0.13.5", features = ["blocking", "json"] }
