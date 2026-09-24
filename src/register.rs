@@ -36,10 +36,6 @@ impl RegCode {
         Self::from_3_bits((value & 0b00111000) >> 3)
     }
 
-    pub fn from_modrm_rm(value: u8) -> Self {
-        Self::from_3_bits(value & 0b000111)
-    }
-
     fn from_3_bits(value: u8) -> Self {
         match value {
             0b000 => RegCode::Reg000,
@@ -192,42 +188,11 @@ impl fmt::Display for GeneralRegister16 {
 impl GeneralRegister for GeneralRegister16 {}
 
 #[derive(Debug)]
-pub struct InvalidSrEncoding(u8);
-
-impl fmt::Display for InvalidSrEncoding {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "invalid segment register encoding {:02b}; expected a value in the range 0b00 - 0b11",
-            self.0
-        )
-    }
-}
-
-impl std::error::Error for InvalidSrEncoding {}
-
-#[derive(Debug)]
 pub enum SrCode {
     Sr00,
     Sr01,
     Sr10,
     Sr11,
-}
-
-impl SrCode {
-    pub fn from_byte(value: u8) -> Self {
-        Self::from_2_bits((value & 0b00011000) >> 3)
-    }
-
-    fn from_2_bits(value: u8) -> Self {
-        match value {
-            0b00 => SrCode::Sr00,
-            0b01 => SrCode::Sr01,
-            0b10 => SrCode::Sr10,
-            0b11 => SrCode::Sr11,
-            _ => unreachable!("caller guarantees 2-bit value"),
-        }
-    }
 }
 
 impl From<RegCode> for SrCode {

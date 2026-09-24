@@ -40,7 +40,7 @@ pub enum DisassemblerError {
     InvalidReg(InvalidRegEncoding),
     InvalidOpcodeExtension(u8),
     InvalidRepOperand(u8),
-    EOF,
+    Eof,
 }
 
 impl std::fmt::Display for DisassemblerError {
@@ -53,7 +53,7 @@ impl std::fmt::Display for DisassemblerError {
                 write!(f, "invalid opcode extension `{:03b}`", value)
             }
             Self::InvalidRepOperand(value) => write!(f, "invalid rep operand `{:02X}`", value),
-            Self::EOF => write!(f, "unexpectedly reached EOF"),
+            Self::Eof => write!(f, "unexpectedly reached EOF"),
         }
     }
 }
@@ -98,14 +98,6 @@ impl Disassembler {
             index: 0,
             instructions: Vec::new(),
         }
-    }
-
-    pub fn dump_operations(&self) -> String {
-        self.instructions
-            .iter()
-            .map(|inst| inst.operation.to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
     }
 
     pub fn dump(&self) -> String {
@@ -863,7 +855,7 @@ impl ByteReader for Disassembler {
 
     fn read_byte(&mut self) -> Result<u8, Self::Error> {
         match self.bytes.get(self.index) {
-            None => Err(DisassemblerError::EOF),
+            None => Err(DisassemblerError::Eof),
             Some(byte) => {
                 self.index += 1;
 
@@ -919,6 +911,14 @@ mod tests {
     struct TestSpec {
         name: String,
         bytes: Vec<u8>,
+    }
+
+    pub fn dump_operations(dis: &Disassembler) -> String {
+        dis.instructions
+            .iter()
+            .map(|inst| inst.operation.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
@@ -1011,7 +1011,7 @@ mod tests {
                 for test_spec in test_list {
                     let mut disassembler = Disassembler::from_bytes(test_spec.bytes.clone());
                     disassembler.disassemble().unwrap();
-                    let observed_name = disassembler.dump_operations();
+                    let observed_name = dump_operations(&disassembler);
 
                     if observed_name != test_spec.name {
                         num_wrong += 1;
@@ -1033,7 +1033,7 @@ mod tests {
         let bytes = vec![0x9B];
         let mut disassembler = Disassembler::from_bytes(bytes.clone());
         disassembler.disassemble().unwrap();
-        let observed_name = disassembler.dump_operations();
+        let observed_name = dump_operations(&disassembler);
 
         assert_eq!(observed_name, "wait");
     }
