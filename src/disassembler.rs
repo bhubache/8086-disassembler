@@ -124,7 +124,10 @@ impl Disassembler {
                 }
                 Err(err) => {
                     // TODO: Add context
-                    println!("Encountered an error during disassembly: {err}");
+                    println!(
+                        "Encountered an error during disassembly: {err}\nCompleted the following:\n{}",
+                        self.dump()
+                    );
 
                     return Err(err);
                 }
