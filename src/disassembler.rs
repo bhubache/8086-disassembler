@@ -856,20 +856,6 @@ impl Disassembler {
 
         Ok((mod_rm, reg))
     }
-
-    // fn read_byte(&mut self) -> u8 {
-    //     let byte = self.bytes[self.index];
-    //     self.index += 1;
-
-    //     byte
-    // }
-
-    // fn read_word(&mut self) -> u16 {
-    //     let word = u16::from_le_bytes([self.bytes[self.index], self.bytes[self.index + 1]]);
-    //     self.index += 2;
-
-    //     word
-    // }
 }
 
 impl ByteReader for Disassembler {
