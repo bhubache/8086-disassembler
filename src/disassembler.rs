@@ -1,6 +1,8 @@
 use std::fs;
 
 use crate::immediate::ImmedGroupImmediate16;
+use crate::immediate::Immediate8;
+use crate::immediate::Immediate16;
 use crate::immediate_parsing::ByteReader;
 use crate::immediate_parsing::ParseImmediate;
 use crate::instruction::Instruction;
@@ -11,7 +13,6 @@ use crate::mode::InvalidModeEncoding;
 use crate::mode::Mode;
 use crate::op_8;
 use crate::op_16;
-use crate::operand::Immediate;
 use crate::operand::MemoryIndex;
 use crate::operand::ModRm;
 use crate::parse_mod_reg_rm_8_from_reg;
@@ -377,20 +378,20 @@ impl Disassembler {
             0x9F => op_8!(Opcode::LahF),
 
             // TODO: These should use the new immediate types
-            0xA0 => op_16!(Opcode::MovToALFromMem8(MemoryIndex::with_immediate(
-                Immediate::Word(self.read_word()?),
+            0xA0 => op_16!(Opcode::MovToALFromMem8(MemoryIndex::with_displacement(
+                Immediate16(self.read_word()?).into(),
                 prefixes,
             ))),
-            0xA1 => op_8!(Opcode::MovToAXFromMem16(MemoryIndex::with_immediate(
-                Immediate::Word(self.read_word()?),
+            0xA1 => op_8!(Opcode::MovToAXFromMem16(MemoryIndex::with_displacement(
+                Immediate16(self.read_word()?).into(),
                 prefixes,
             ))),
-            0xA2 => op_8!(Opcode::MovToMem8FromAL(MemoryIndex::with_immediate(
-                Immediate::Word(self.read_word()?),
+            0xA2 => op_8!(Opcode::MovToMem8FromAL(MemoryIndex::with_displacement(
+                Immediate16(self.read_word()?).into(),
                 prefixes,
             ))),
-            0xA3 => op_8!(Opcode::MovToMem16FromAL(MemoryIndex::with_immediate(
-                Immediate::Word(self.read_word()?),
+            0xA3 => op_8!(Opcode::MovToMem16FromAL(MemoryIndex::with_displacement(
+                Immediate16(self.read_word()?).into(),
                 prefixes,
             ))),
             0xA4 => op_8!(Opcode::MovS8(prefixes.sr_override)),
@@ -827,14 +828,14 @@ impl Disassembler {
 
                 if mode == Mode::Mem8BitDisplacement {
                     ModRm::from_mem(MemoryIndex {
-                        displacement: Some(Immediate::Byte(self.read_byte()?)),
+                        displacement: Some(Immediate8(self.read_byte()?).into()),
                         base: Some(base),
                         index: index_reg,
                         sr,
                     })
                 } else if mode == Mode::Mem16BitDisplacement {
                     ModRm::from_mem(MemoryIndex {
-                        displacement: Some(Immediate::Word(self.read_word()?)),
+                        displacement: Some(Immediate16(self.read_word()?).into()),
                         base: Some(base),
                         index: index_reg,
                         sr,
@@ -847,7 +848,7 @@ impl Disassembler {
                         };
 
                         ModRm::from_mem(MemoryIndex {
-                            displacement: Some(Immediate::Word(self.read_word()?)),
+                            displacement: Some(Immediate16(self.read_word()?).into()),
                             base: None,
                             index: None,
                             sr,

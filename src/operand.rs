@@ -1,34 +1,12 @@
 use std::fmt;
 
+use crate::immediate::Immediate8;
+use crate::immediate::Immediate16;
 use crate::prefixes::Prefixes;
 use crate::register::GeneralRegister16;
 use crate::register::SegmentRegister;
 
 use crate::width::OpWidth;
-
-#[derive(Debug, Copy, Clone)]
-pub enum Immediate {
-    Byte(u8),
-    Word(u16),
-}
-
-impl fmt::Display for Immediate {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Byte(byte) => write!(f, "{}", byte),
-            Self::Word(word) => write!(f, "{}", word),
-        }
-    }
-}
-
-impl fmt::UpperHex for Immediate {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Byte(byte) => write!(f, "{:X}", byte),
-            Self::Word(word) => write!(f, "{:X}", word),
-        }
-    }
-}
 
 #[derive(Debug)]
 pub enum ModRm<W: OpWidth> {
@@ -56,15 +34,42 @@ impl<W: OpWidth> fmt::Display for ModRm<W> {
 }
 
 #[derive(Debug)]
+pub enum Displacement {
+    D8(Immediate8),
+    D16(Immediate16),
+}
+
+impl fmt::UpperHex for Displacement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::D8(immed) => fmt::UpperHex::fmt(immed, f),
+            Self::D16(immed) => fmt::UpperHex::fmt(immed, f),
+        }
+    }
+}
+
+impl From<Immediate8> for Displacement {
+    fn from(value: Immediate8) -> Self {
+        Self::D8(value)
+    }
+}
+
+impl From<Immediate16> for Displacement {
+    fn from(value: Immediate16) -> Self {
+        Self::D16(value)
+    }
+}
+
+#[derive(Debug)]
 pub struct MemoryIndex {
     pub sr: SegmentRegister,
     pub base: Option<GeneralRegister16>,
     pub index: Option<GeneralRegister16>,
-    pub displacement: Option<Immediate>,
+    pub displacement: Option<Displacement>,
 }
 
 impl MemoryIndex {
-    pub fn with_immediate(displacement: Immediate, prefixes: &Prefixes) -> MemoryIndex {
+    pub fn with_displacement(displacement: Displacement, prefixes: &Prefixes) -> MemoryIndex {
         let sr = match prefixes.sr_override {
             Some(seg_reg) => seg_reg,
             None => SegmentRegister::DS,
@@ -94,15 +99,15 @@ impl fmt::Display for MemoryIndex {
                 None => String::new(),
             },
             match self.displacement {
-                Some(displacement) => {
+                Some(ref displacement) => {
                     if self.base.is_none() && self.index.is_none() {
                         // The displacement is not being added to or
                         // subtracted from another value
-                        format!("{:X}h", displacement)
+                        format!("{:X}", displacement)
                     } else {
                         match displacement {
-                            Immediate::Byte(byte) => {
-                                let signed_value = byte as i8;
+                            Displacement::D8(Immediate8(byte)) => {
+                                let signed_value = *byte as i8;
 
                                 format!(
                                     "{}{:X}h",
@@ -110,8 +115,8 @@ impl fmt::Display for MemoryIndex {
                                     signed_value.wrapping_abs(),
                                 )
                             }
-                            Immediate::Word(word) => {
-                                let signed_value = word as i16;
+                            Displacement::D16(Immediate16(word)) => {
+                                let signed_value = *word as i16;
 
                                 format!(
                                     "{}{:X}h",
