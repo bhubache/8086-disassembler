@@ -70,18 +70,6 @@ impl From<GeneralRegister16> for RegCode {
     }
 }
 
-impl TryFrom<u8> for RegCode {
-    type Error = InvalidRegEncoding;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        if value > 0b111 {
-            Err(InvalidRegEncoding(value))
-        } else {
-            Ok(Self::from_3_bits(value))
-        }
-    }
-}
-
 #[derive(Debug, Copy, Clone)]
 pub enum GeneralRegister8 {
     // low 8 bits
@@ -238,18 +226,6 @@ impl SrCode {
             0b10 => SrCode::Sr10,
             0b11 => SrCode::Sr11,
             _ => unreachable!("caller guarantees 2-bit value"),
-        }
-    }
-}
-
-impl TryFrom<u8> for SrCode {
-    type Error = InvalidSrEncoding;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        if value > 0b11 {
-            Err(InvalidSrEncoding(value))
-        } else {
-            Ok(Self::from_2_bits(value))
         }
     }
 }

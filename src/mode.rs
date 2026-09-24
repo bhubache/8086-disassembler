@@ -38,15 +38,3 @@ impl Mode {
         }
     }
 }
-
-impl TryFrom<u8> for Mode {
-    type Error = InvalidModeEncoding;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        if value > 0b11 {
-            Err(InvalidModeEncoding(value))
-        } else {
-            Ok(Self::from_2_bits(value))
-        }
-    }
-}
