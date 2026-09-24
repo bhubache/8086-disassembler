@@ -15,7 +15,7 @@ impl fmt::Display for InvalidRmEncoding {
 
 impl std::error::Error for InvalidRmEncoding {}
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum RmCode {
     Rm000,
     Rm001,

@@ -3,9 +3,9 @@ use std::fmt;
 use crate::immediate::Immediate8;
 use crate::immediate::Immediate16;
 use crate::prefixes::Prefixes;
-use crate::register::GeneralRegister16;
 use crate::register::SegmentRegister;
 
+use crate::rm::RmCode;
 use crate::width::OpWidth;
 
 #[derive(Debug)]
@@ -34,7 +34,50 @@ impl<W: OpWidth> fmt::Display for ModRm<W> {
 }
 
 #[derive(Debug)]
+pub enum AddressCalculation {
+    BxSi,
+    BxDi,
+    BpSi,
+    BpDi,
+    Si,
+    Di,
+    Bx,
+    Bp,
+}
+
+impl From<RmCode> for AddressCalculation {
+    fn from(value: RmCode) -> Self {
+        match value {
+            RmCode::Rm000 => Self::BxSi,
+            RmCode::Rm001 => Self::BxDi,
+            RmCode::Rm010 => Self::BpSi,
+            RmCode::Rm011 => Self::BpDi,
+            RmCode::Rm100 => Self::Si,
+            RmCode::Rm101 => Self::Di,
+            RmCode::Rm110 => Self::Bp,
+            RmCode::Rm111 => Self::Bx,
+        }
+    }
+}
+
+impl fmt::Display for AddressCalculation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BxSi => write!(f, "bx+si"),
+            Self::BxDi => write!(f, "bx+di"),
+            Self::BpSi => write!(f, "bp+si"),
+            Self::BpDi => write!(f, "bp+di"),
+            Self::Si => write!(f, "si"),
+            Self::Di => write!(f, "di"),
+            Self::Bx => write!(f, "bx"),
+            Self::Bp => write!(f, "bp"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum Displacement {
+    None,
     D8(Immediate8),
     D16(Immediate16),
 }
@@ -42,6 +85,7 @@ pub enum Displacement {
 impl fmt::UpperHex for Displacement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::None => write!(f, ""),
             Self::D8(immed) => fmt::UpperHex::fmt(immed, f),
             Self::D16(immed) => fmt::UpperHex::fmt(immed, f),
         }
@@ -61,74 +105,66 @@ impl From<Immediate16> for Displacement {
 }
 
 #[derive(Debug)]
-pub struct MemoryIndex {
-    pub sr: SegmentRegister,
-    pub base: Option<GeneralRegister16>,
-    pub index: Option<GeneralRegister16>,
-    pub displacement: Option<Displacement>,
+pub enum MemoryIndex {
+    Based {
+        sr: SegmentRegister,
+        addr_calc: AddressCalculation,
+        displacement: Displacement,
+    },
+    Direct {
+        sr: SegmentRegister,
+        address: Immediate16,
+    },
 }
 
 impl MemoryIndex {
-    pub fn with_displacement(displacement: Displacement, prefixes: &Prefixes) -> MemoryIndex {
+    pub fn with_address(address: Immediate16, prefixes: &Prefixes) -> MemoryIndex {
         let sr = match prefixes.sr_override {
             Some(seg_reg) => seg_reg,
             None => SegmentRegister::DS,
         };
 
-        MemoryIndex {
-            base: None,
-            index: None,
-            sr,
-            displacement: Some(displacement),
-        }
+        MemoryIndex::Direct { address, sr }
     }
 }
 
 impl fmt::Display for MemoryIndex {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "[{}:{}{}{}]",
-            self.sr,
-            match self.base {
-                Some(base) => base.to_string(),
-                None => String::new(),
-            },
-            match self.index {
-                Some(index) => format!("+{}", index),
-                None => String::new(),
-            },
-            match self.displacement {
-                Some(ref displacement) => {
-                    if self.base.is_none() && self.index.is_none() {
-                        // The displacement is not being added to or
-                        // subtracted from another value
-                        format!("{:X}", displacement)
-                    } else {
-                        match displacement {
-                            Displacement::D8(Immediate8(byte)) => {
-                                let signed_value = *byte as i8;
+        match self {
+            Self::Direct { sr, address } => write!(f, "[{}:{:X}]", sr, address),
+            Self::Based {
+                sr,
+                addr_calc,
+                displacement,
+            } => {
+                write!(
+                    f,
+                    "[{}:{}{}]",
+                    sr,
+                    addr_calc,
+                    match *displacement {
+                        Displacement::None => String::new(),
+                        Displacement::D8(Immediate8(byte)) => {
+                            let signed_value = byte as i8;
 
-                                format!(
-                                    "{}{:X}h",
-                                    if signed_value < 0 { "-" } else { "+" },
-                                    signed_value.wrapping_abs(),
-                                )
-                            }
-                            Displacement::D16(Immediate16(word)) => {
-                                let signed_value = *word as i16;
+                            format!(
+                                "{}{:X}h",
+                                if signed_value < 0 { "-" } else { "+" },
+                                signed_value.wrapping_abs(),
+                            )
+                        }
+                        Displacement::D16(Immediate16(word)) => {
+                            let signed_value = word as i16;
 
-                                format!(
-                                    "{}{:X}h",
-                                    if signed_value < 0 { "-" } else { "+" },
-                                    signed_value.wrapping_abs(),
-                                )
-                            }
+                            format!(
+                                "{}{:X}h",
+                                if signed_value < 0 { "-" } else { "+" },
+                                signed_value.wrapping_abs(),
+                            )
                         }
                     }
-                }
-                None => String::new(),
-            },
-        )
+                )
+            }
+        }
     }
 }

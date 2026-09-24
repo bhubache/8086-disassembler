@@ -13,6 +13,8 @@ use crate::mode::InvalidModeEncoding;
 use crate::mode::Mode;
 use crate::op_8;
 use crate::op_16;
+use crate::operand::AddressCalculation;
+use crate::operand::Displacement;
 use crate::operand::MemoryIndex;
 use crate::operand::ModRm;
 use crate::parse_mod_reg_rm_8_from_reg;
@@ -376,22 +378,20 @@ impl Disassembler {
             0x9D => op_8!(Opcode::PopF),
             0x9E => op_8!(Opcode::SahF),
             0x9F => op_8!(Opcode::LahF),
-
-            // TODO: These should use the new immediate types
-            0xA0 => op_16!(Opcode::MovToALFromMem8(MemoryIndex::with_displacement(
-                Immediate16(self.read_word()?).into(),
+            0xA0 => op_16!(Opcode::MovToALFromMem8(MemoryIndex::with_address(
+                self.read_word()?.into(),
                 prefixes,
             ))),
-            0xA1 => op_8!(Opcode::MovToAXFromMem16(MemoryIndex::with_displacement(
-                Immediate16(self.read_word()?).into(),
+            0xA1 => op_8!(Opcode::MovToAXFromMem16(MemoryIndex::with_address(
+                self.read_word()?.into(),
                 prefixes,
             ))),
-            0xA2 => op_8!(Opcode::MovToMem8FromAL(MemoryIndex::with_displacement(
-                Immediate16(self.read_word()?).into(),
+            0xA2 => op_8!(Opcode::MovToMem8FromAL(MemoryIndex::with_address(
+                self.read_word()?.into(),
                 prefixes,
             ))),
-            0xA3 => op_8!(Opcode::MovToMem16FromAL(MemoryIndex::with_displacement(
-                Immediate16(self.read_word()?).into(),
+            0xA3 => op_8!(Opcode::MovToMem16FromAL(MemoryIndex::with_address(
+                self.read_word()?.into(),
                 prefixes,
             ))),
             0xA4 => op_8!(Opcode::MovS8(prefixes.sr_override)),
@@ -807,62 +807,49 @@ impl Disassembler {
         let mod_rm = match mode {
             Mode::Register => ModRm::Register(W::Register::from(rm)),
             _ => {
-                let (base, index_reg) = match rm {
-                    RmCode::Rm000 => (GeneralRegister16::BX, Some(GeneralRegister16::SI)),
-                    RmCode::Rm001 => (GeneralRegister16::BX, Some(GeneralRegister16::DI)),
-                    RmCode::Rm010 => (GeneralRegister16::BP, Some(GeneralRegister16::SI)),
-                    RmCode::Rm011 => (GeneralRegister16::BP, Some(GeneralRegister16::DI)),
-                    RmCode::Rm100 => (GeneralRegister16::SI, None),
-                    RmCode::Rm101 => (GeneralRegister16::DI, None),
-                    RmCode::Rm110 => (GeneralRegister16::BP, None),
-                    RmCode::Rm111 => (GeneralRegister16::BX, None),
-                };
+                let addr_calc = AddressCalculation::from(rm);
 
                 let sr = match prefixes.sr_override {
                     Some(reg) => reg,
-                    None => match base {
-                        GeneralRegister16::BP => SegmentRegister::SS,
+                    None => match addr_calc {
+                        AddressCalculation::BpDi
+                        | AddressCalculation::BpSi
+                        | AddressCalculation::Bp => SegmentRegister::SS,
                         _ => SegmentRegister::DS,
                     },
                 };
 
-                if mode == Mode::Mem8BitDisplacement {
-                    ModRm::from_mem(MemoryIndex {
-                        displacement: Some(Immediate8(self.read_byte()?).into()),
-                        base: Some(base),
-                        index: index_reg,
+                match mode {
+                    Mode::Mem8BitDisplacement => ModRm::EffectiveAddr(MemoryIndex::Based {
                         sr,
-                    })
-                } else if mode == Mode::Mem16BitDisplacement {
-                    ModRm::from_mem(MemoryIndex {
-                        displacement: Some(Immediate16(self.read_word()?).into()),
-                        base: Some(base),
-                        index: index_reg,
+                        addr_calc,
+                        displacement: Immediate8(self.read_byte()?).into(),
+                    }),
+                    Mode::Mem16BitDisplacement => ModRm::EffectiveAddr(MemoryIndex::Based {
                         sr,
-                    })
-                } else if mode == Mode::MemNoDisplacement {
-                    if rm == RmCode::Rm110 {
-                        let sr = match prefixes.sr_override {
-                            Some(reg) => reg,
-                            None => SegmentRegister::DS,
-                        };
+                        addr_calc,
+                        displacement: Immediate16(self.read_word()?).into(),
+                    }),
+                    Mode::MemNoDisplacement => {
+                        if rm == RmCode::Rm110 {
+                            let sr = match prefixes.sr_override {
+                                Some(reg) => reg,
+                                None => SegmentRegister::DS,
+                            };
 
-                        ModRm::from_mem(MemoryIndex {
-                            displacement: Some(Immediate16(self.read_word()?).into()),
-                            base: None,
-                            index: None,
-                            sr,
-                        })
-                    } else {
-                        ModRm::from_mem(MemoryIndex {
-                            displacement: None,
-                            base: Some(base),
-                            index: index_reg,
-                            sr,
-                        })
+                            ModRm::from_mem(MemoryIndex::Direct {
+                                sr,
+                                address: Immediate16(self.read_word()?),
+                            })
+                        } else {
+                            ModRm::from_mem(MemoryIndex::Based {
+                                displacement: Displacement::None,
+                                addr_calc,
+                                sr,
+                            })
+                        }
                     }
-                } else {
-                    panic!("Unexpected memory mode {:?} with rm {:?}", mode, rm);
+                    _ => unreachable!("register mode should already be accounted for"),
                 }
             }
         };
