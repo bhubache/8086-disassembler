@@ -14,16 +14,6 @@ pub enum ModRm<W: OpWidth> {
     EffectiveAddr(MemoryIndex),
 }
 
-impl<W: OpWidth> ModRm<W> {
-    pub fn from_register(reg: W::Register) -> Self {
-        Self::Register(reg)
-    }
-
-    pub fn from_mem(mem: MemoryIndex) -> Self {
-        Self::EffectiveAddr(mem)
-    }
-}
-
 impl<W: OpWidth> fmt::Display for ModRm<W> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

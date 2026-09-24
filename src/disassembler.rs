@@ -837,12 +837,12 @@ impl Disassembler {
                                 None => SegmentRegister::DS,
                             };
 
-                            ModRm::from_mem(MemoryIndex::Direct {
+                            ModRm::EffectiveAddr(MemoryIndex::Direct {
                                 sr,
                                 address: Immediate16(self.read_word()?),
                             })
                         } else {
-                            ModRm::from_mem(MemoryIndex::Based {
+                            ModRm::EffectiveAddr(MemoryIndex::Based {
                                 displacement: Displacement::None,
                                 addr_calc,
                                 sr,
