@@ -570,7 +570,8 @@ impl Disassembler {
             0xF0 => op_8!(Opcode::Lock),
             0xF1 => todo!(),
             0xF2 | 0xF3 => match self.parse_rep_op()? {
-                RepOp::UndocumentedIdiv => self.parse_operation(0xF6, prefixes)?,
+                RepOp::UndocumentedIdiv8 => self.parse_operation(0xF6, prefixes)?,
+                RepOp::UndocumentedIdiv16 => self.parse_operation(0xF7, prefixes)?,
                 rep_op => {
                     let opcode_cons = if opcode_byte == 0xF2 {
                         Opcode::Repne
@@ -654,7 +655,8 @@ impl Disassembler {
             0xAD => RepOp::Rsi(RepeatableStringInstruction::Lodsw),
             0xAE => RepOp::Rsi(RepeatableStringInstruction::Scasb),
             0xAF => RepOp::Rsi(RepeatableStringInstruction::Scasw),
-            0xF6 => RepOp::UndocumentedIdiv,
+            0xF6 => RepOp::UndocumentedIdiv8,
+            0xF7 => RepOp::UndocumentedIdiv16,
             op => return Err(DisassemblerError::InvalidRepOperand(op)),
         };
 
@@ -956,12 +958,6 @@ mod tests {
         fs::create_dir_all(&tests_folder_path).unwrap();
 
         for (opcode, metadata) in test_metadata.opcodes.iter() {
-            // TODO: 0xF7 has some, according to the manual, unsupported operands but the CPU still
-            // does something because the hardware didn't yet handle illegal opcodes
-            if opcode == "F7" {
-                continue;
-            }
-
             let filenames = match metadata {
                 OpcodeMetadata::Normal(Normal { status }) => {
                     if status == "prefix" {

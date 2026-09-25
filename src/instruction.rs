@@ -460,7 +460,8 @@ impl<W: OpWidth> fmt::Display for Opcode<W> {
             Self::TestToModRmFromImmed(mod_rm, immed) => write!(f, "test {}, {:X}", mod_rm, immed),
 
             Self::Rep(sr, rep_str_inst) => match rep_str_inst {
-                RepOp::UndocumentedIdiv => write!(f, "{}", RepOp::UndocumentedIdiv),
+                RepOp::UndocumentedIdiv8 => write!(f, "{}", RepOp::UndocumentedIdiv8),
+                RepOp::UndocumentedIdiv16 => write!(f, "{}", RepOp::UndocumentedIdiv16),
                 RepOp::Rsi(rsi) => {
                     let sr_str = match sr {
                         Some(sr) => format!("{} ", sr),
@@ -479,7 +480,8 @@ impl<W: OpWidth> fmt::Display for Opcode<W> {
                 }
             },
             Self::Repne(sr, rep_str_inst) => match rep_str_inst {
-                RepOp::UndocumentedIdiv => write!(f, "{}", RepOp::UndocumentedIdiv),
+                RepOp::UndocumentedIdiv8 => write!(f, "{}", RepOp::UndocumentedIdiv8),
+                RepOp::UndocumentedIdiv16 => write!(f, "{}", RepOp::UndocumentedIdiv16),
                 RepOp::Rsi(rsi) => {
                     let sr_str = match sr {
                         Some(sr) => format!("{} ", sr),

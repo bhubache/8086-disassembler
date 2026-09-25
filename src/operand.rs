@@ -163,15 +163,19 @@ impl fmt::Display for MemoryIndex {
 #[derive(Debug)]
 pub enum RepOp {
     Rsi(RepeatableStringInstruction),
-    UndocumentedIdiv,
+    UndocumentedIdiv8,
+    UndocumentedIdiv16,
 }
 
 impl fmt::Display for RepOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Rsi(rsi) => rsi.fmt(f),
-            Self::UndocumentedIdiv => {
-                unreachable!("This should only ever be used to start idiv parsing")
+            Self::UndocumentedIdiv8 => {
+                unreachable!("This should only ever be used to start 8-bit idiv parsing")
+            }
+            Self::UndocumentedIdiv16 => {
+                unreachable!("This should only ever be used to start 16-bit idiv parsing")
             }
         }
     }
