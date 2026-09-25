@@ -2,6 +2,7 @@ use std::fmt;
 
 use crate::operand::MemoryIndex;
 use crate::operand::ModRm;
+use crate::operand::RepOp;
 use crate::register::GeneralRegister16;
 use crate::register::SegmentRegister;
 use crate::width::OpWidth;
@@ -43,8 +44,8 @@ impl fmt::Display for Operation {
 #[derive(Debug)]
 pub enum Opcode<W: OpWidth> {
     // rep
-    Rep(Option<SegmentRegister>, RepeatableStringInstruction),
-    Repne(Option<SegmentRegister>, RepeatableStringInstruction),
+    Rep(Option<SegmentRegister>, RepOp),
+    Repne(Option<SegmentRegister>, RepOp),
 
     // add
     AddFromReg(ModRm<W>, W::Register),
@@ -458,38 +459,44 @@ impl<W: OpWidth> fmt::Display for Opcode<W> {
             Self::TestToAXFromImmed16(word) => write!(f, "test ax, {:X}", word),
             Self::TestToModRmFromImmed(mod_rm, immed) => write!(f, "test {}, {:X}", mod_rm, immed),
 
-            Self::Rep(sr, rep_str_inst) => {
-                let sr_str = match sr {
-                    Some(sr) => format!("{} ", sr),
-                    None => String::new(),
-                };
+            Self::Rep(sr, rep_str_inst) => match rep_str_inst {
+                RepOp::UndocumentedIdiv => write!(f, "{}", RepOp::UndocumentedIdiv),
+                RepOp::Rsi(rsi) => {
+                    let sr_str = match sr {
+                        Some(sr) => format!("{} ", sr),
+                        None => String::new(),
+                    };
 
-                let rep_str = match rep_str_inst {
-                    RepeatableStringInstruction::Scasb => "repe",
-                    RepeatableStringInstruction::Scasw => "repe",
-                    RepeatableStringInstruction::Cmpsb => "repe",
-                    RepeatableStringInstruction::Cmpsw => "repe",
-                    _ => "rep",
-                };
+                    let rep_str = match rsi {
+                        RepeatableStringInstruction::Scasb => "repe",
+                        RepeatableStringInstruction::Scasw => "repe",
+                        RepeatableStringInstruction::Cmpsb => "repe",
+                        RepeatableStringInstruction::Cmpsw => "repe",
+                        _ => "rep",
+                    };
 
-                write!(f, "{}{} {}", sr_str, rep_str, rep_str_inst)
-            }
-            Self::Repne(sr, rep_str_inst) => {
-                let sr_str = match sr {
-                    Some(sr) => format!("{} ", sr),
-                    None => String::new(),
-                };
+                    write!(f, "{}{} {}", sr_str, rep_str, rep_str_inst)
+                }
+            },
+            Self::Repne(sr, rep_str_inst) => match rep_str_inst {
+                RepOp::UndocumentedIdiv => write!(f, "{}", RepOp::UndocumentedIdiv),
+                RepOp::Rsi(rsi) => {
+                    let sr_str = match sr {
+                        Some(sr) => format!("{} ", sr),
+                        None => String::new(),
+                    };
 
-                let rep_str = match rep_str_inst {
-                    RepeatableStringInstruction::Scasb => "repne",
-                    RepeatableStringInstruction::Scasw => "repne",
-                    RepeatableStringInstruction::Cmpsb => "repne",
-                    RepeatableStringInstruction::Cmpsw => "repne",
-                    _ => "rep",
-                };
+                    let rep_str = match rsi {
+                        RepeatableStringInstruction::Scasb => "repne",
+                        RepeatableStringInstruction::Scasw => "repne",
+                        RepeatableStringInstruction::Cmpsb => "repne",
+                        RepeatableStringInstruction::Cmpsw => "repne",
+                        _ => "rep",
+                    };
 
-                write!(f, "{}{} {}", sr_str, rep_str, rep_str_inst)
-            }
+                    write!(f, "{}{} {}", sr_str, rep_str, rep_str_inst)
+                }
+            },
 
             Self::PushSR(sr) => write!(f, "push {}", sr),
             Self::PushGR16(reg) => write!(f, "push {}", reg),

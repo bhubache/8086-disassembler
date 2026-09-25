@@ -2,6 +2,7 @@ use std::fmt;
 
 use crate::immediate::Immediate8;
 use crate::immediate::Immediate16;
+use crate::instruction::RepeatableStringInstruction;
 use crate::prefixes::Prefixes;
 use crate::register::SegmentRegister;
 
@@ -154,6 +155,23 @@ impl fmt::Display for MemoryIndex {
                         }
                     }
                 )
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum RepOp {
+    Rsi(RepeatableStringInstruction),
+    UndocumentedIdiv,
+}
+
+impl fmt::Display for RepOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Rsi(rsi) => rsi.fmt(f),
+            Self::UndocumentedIdiv => {
+                unreachable!("This should only ever be used to start idiv parsing")
             }
         }
     }

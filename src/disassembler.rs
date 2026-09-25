@@ -17,6 +17,7 @@ use crate::operand::AddressCalculation;
 use crate::operand::Displacement;
 use crate::operand::MemoryIndex;
 use crate::operand::ModRm;
+use crate::operand::RepOp;
 use crate::parse_mod_reg_rm_8_from_reg;
 use crate::parse_mod_reg_rm_8_to_reg;
 use crate::parse_mod_reg_rm_16_from_reg;
@@ -568,8 +569,17 @@ impl Disassembler {
             0xEF => op_8!(Opcode::OutToDXFromAX),
             0xF0 => op_8!(Opcode::Lock),
             0xF1 => todo!(),
-            0xF2 => op_8!(Opcode::Repne(prefixes.sr_override, self.parse_rep_op()?)),
-            0xF3 => op_8!(Opcode::Rep(prefixes.sr_override, self.parse_rep_op()?)),
+            0xF2 | 0xF3 => match self.parse_rep_op()? {
+                RepOp::UndocumentedIdiv => self.parse_operation(0xF6, prefixes)?,
+                rep_op => {
+                    let opcode_cons = if opcode_byte == 0xF2 {
+                        Opcode::Repne
+                    } else {
+                        Opcode::Rep
+                    };
+                    op_8!(opcode_cons(prefixes.sr_override, rep_op))
+                }
+            },
             0xF4 => op_8!(Opcode::Hlt),
             0xF5 => op_8!(Opcode::Cmc),
             0xF6 => {
@@ -632,22 +642,23 @@ impl Disassembler {
         }
     }
 
-    fn parse_rep_op(&mut self) -> Result<RepeatableStringInstruction, DisassemblerError> {
-        let rsi = match self.read_byte()? {
-            0xA4 => RepeatableStringInstruction::Movsb,
-            0xA5 => RepeatableStringInstruction::Movsw,
-            0xA6 => RepeatableStringInstruction::Cmpsb,
-            0xA7 => RepeatableStringInstruction::Cmpsw,
-            0xAA => RepeatableStringInstruction::Stosb,
-            0xAB => RepeatableStringInstruction::Stosw,
-            0xAC => RepeatableStringInstruction::Lodsb,
-            0xAD => RepeatableStringInstruction::Lodsw,
-            0xAE => RepeatableStringInstruction::Scasb,
-            0xAF => RepeatableStringInstruction::Scasw,
+    fn parse_rep_op(&mut self) -> Result<RepOp, DisassemblerError> {
+        let rep_op = match self.read_byte()? {
+            0xA4 => RepOp::Rsi(RepeatableStringInstruction::Movsb),
+            0xA5 => RepOp::Rsi(RepeatableStringInstruction::Movsw),
+            0xA6 => RepOp::Rsi(RepeatableStringInstruction::Cmpsb),
+            0xA7 => RepOp::Rsi(RepeatableStringInstruction::Cmpsw),
+            0xAA => RepOp::Rsi(RepeatableStringInstruction::Stosb),
+            0xAB => RepOp::Rsi(RepeatableStringInstruction::Stosw),
+            0xAC => RepOp::Rsi(RepeatableStringInstruction::Lodsb),
+            0xAD => RepOp::Rsi(RepeatableStringInstruction::Lodsw),
+            0xAE => RepOp::Rsi(RepeatableStringInstruction::Scasb),
+            0xAF => RepOp::Rsi(RepeatableStringInstruction::Scasw),
+            0xF6 => RepOp::UndocumentedIdiv,
             op => return Err(DisassemblerError::InvalidRepOperand(op)),
         };
 
-        Ok(rsi)
+        Ok(rep_op)
     }
 
     fn create_modrm_with_reg_mnemonic_encoding_group2_8bit(
@@ -945,10 +956,9 @@ mod tests {
         fs::create_dir_all(&tests_folder_path).unwrap();
 
         for (opcode, metadata) in test_metadata.opcodes.iter() {
-            // TODO: 0xF6 (similarly for 0xF7) has [46, 243, 246, 248] `idiv al`. I believe this is illegal according to the
-            // manual but the CPU still does something because the hardware didn't yet handle illegal
-            // opcodes
-            if opcode == "F6" || opcode == "F7" {
+            // TODO: 0xF7 has some, according to the manual, unsupported operands but the CPU still
+            // does something because the hardware didn't yet handle illegal opcodes
+            if opcode == "F7" {
                 continue;
             }
 
